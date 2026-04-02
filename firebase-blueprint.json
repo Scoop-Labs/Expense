@@ -1,0 +1,75 @@
+{
+  "entities": {
+    "Transaction": {
+      "title": "Transaction",
+      "description": "Income or Expense record",
+      "type": "object",
+      "properties": {
+        "date": { "type": "string" },
+        "description": { "type": "string" },
+        "amount": { "type": "number" },
+        "gst": { "type": "number" },
+        "total": { "type": "number" },
+        "type": { "type": "string", "enum": ["income", "expense"] },
+        "userId": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["date", "description", "amount", "gst", "total", "type", "userId"]
+    },
+    "Liability": {
+      "title": "Liability",
+      "description": "Liability record (Credit or Debit)",
+      "type": "object",
+      "properties": {
+        "date": { "type": "string" },
+        "account": { "type": "string" },
+        "description": { "type": "string" },
+        "amount": { "type": "number" },
+        "type": { "type": "string", "enum": ["credit", "debit"] },
+        "userId": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["date", "account", "description", "amount", "type", "userId"]
+    },
+    "Account": {
+      "title": "Account",
+      "description": "Financial account",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string" },
+        "userId": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["name", "userId"]
+    },
+    "UserProfile": {
+      "title": "UserProfile",
+      "description": "User profile information",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string" },
+        "email": { "type": "string" },
+        "role": { "type": "string", "enum": ["admin", "user"] }
+      },
+      "required": ["uid", "email", "role"]
+    }
+  },
+  "firestore": {
+    "/transactions/{transactionId}": {
+      "schema": "Transaction",
+      "description": "Collection of all income and expense transactions"
+    },
+    "/liabilities/{liabilityId}": {
+      "schema": "Liability",
+      "description": "Collection of all liability records"
+    },
+    "/accounts/{accountId}": {
+      "schema": "Account",
+      "description": "Collection of all financial accounts"
+    },
+    "/users/{userId}": {
+      "schema": "UserProfile",
+      "description": "User profile data"
+    }
+  }
+}
