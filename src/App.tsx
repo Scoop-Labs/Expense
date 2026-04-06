@@ -115,6 +115,9 @@ export function useAuth() {
   return context;
 }
 
+// --- Constants ---
+const MONTHS = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
+
 // --- Precision Math Helper ---
 const formatCurrency = (num: number) => {
   return new Intl.NumberFormat('en-IN', {
@@ -257,44 +260,113 @@ function Dashboard() {
     localStorage.setItem(`accounts_${user.uid}`, JSON.stringify(newAccounts));
   };
 
+  // --- Date Helpers ---
+  const getPeriodRange = useMemo(() => {
+    const startMonthIdx = MONTHS.indexOf(currentMonth);
+    const startYear = parseInt(currentYear);
+    
+    const startDate = new Date(startYear, startMonthIdx, 1);
+    const endDate = new Date(startYear, startMonthIdx + viewDuration, 0, 23, 59, 59);
+    
+    return { startDate, endDate };
+  }, [currentMonth, currentYear, viewDuration]);
+
+  const parseItemDate = (dateStr: string) => {
+    // Try parsing as ISO first
+    const date = new Date(dateStr);
+    if (!isNaN(date.getTime())) return date;
+
+    // Fallback for "2nd April" format
+    const parts = dateStr.split(' ');
+    if (parts.length >= 2) {
+      const day = parseInt(parts[0]);
+      const monthName = parts[1];
+      const monthIdx = MONTHS.indexOf(monthName);
+      if (monthIdx !== -1) {
+        // Assume current year if not specified in the string
+        return new Date(parseInt(currentYear), monthIdx, day || 1);
+      }
+    }
+    return new Date(0); // Invalid date
+  };
+
+  // --- Filtered Data ---
+  const filteredIncome = useMemo(() => {
+    const { startDate, endDate } = getPeriodRange;
+    return income.filter(item => {
+      const itemDate = parseItemDate(item.date);
+      return itemDate >= startDate && itemDate <= endDate;
+    });
+  }, [income, getPeriodRange, currentYear]);
+
+  const filteredExpense = useMemo(() => {
+    const { startDate, endDate } = getPeriodRange;
+    return expense.filter(item => {
+      const itemDate = parseItemDate(item.date);
+      return itemDate >= startDate && itemDate <= endDate;
+    });
+  }, [expense, getPeriodRange, currentYear]);
+
+  const filteredLiabilityCredit = useMemo(() => {
+    const { endDate } = getPeriodRange;
+    // For liabilities, we want everything UP TO the end of the period (cumulative carry-forward)
+    return liabilityCredit.filter(item => {
+      const itemDate = parseItemDate(item.date);
+      return itemDate <= endDate;
+    });
+  }, [liabilityCredit, getPeriodRange, currentYear]);
+
+  const filteredLiabilityDebit = useMemo(() => {
+    const { endDate } = getPeriodRange;
+    // For liabilities, we want everything UP TO the end of the period (cumulative carry-forward)
+    return liabilityDebit.filter(item => {
+      const itemDate = parseItemDate(item.date);
+      return itemDate <= endDate;
+    });
+  }, [liabilityDebit, getPeriodRange, currentYear]);
+
   // --- Aggregated Due Summary ---
   const aggregatedDueSummary = useMemo(() => {
     const dues: Record<string, number> = {};
     
-    liabilityCredit.forEach(item => {
-      dues[item.account] = preciseAdd(dues[item.account] || 0, item.amount);
+    filteredLiabilityCredit.forEach(item => {
+      const account = item.account.trim();
+      if (!account) return;
+      dues[account] = preciseAdd(dues[account] || 0, item.amount);
     });
     
-    liabilityDebit.forEach(item => {
-      dues[item.account] = preciseSub(dues[item.account] || 0, item.amount);
+    filteredLiabilityDebit.forEach(item => {
+      const account = item.account.trim();
+      if (!account) return;
+      dues[account] = preciseSub(dues[account] || 0, item.amount);
     });
 
     return Object.entries(dues)
       .filter(([_, amount]) => amount !== 0)
-      .map(([account, amount]) => ({ account, amount }));
-  }, [liabilityCredit, liabilityDebit]);
+      .map(([account, amount]) => ({ account, amount }))
+      .sort((a, b) => b.amount - a.amount);
+  }, [filteredLiabilityCredit, filteredLiabilityDebit]);
 
   // --- Advanced Calculation Engine ---
   const calculations = useMemo(() => {
-    // Base monthly totals
-    const baseIncome = income.reduce((acc, curr) => preciseAdd(acc, curr.total), 0);
-    const baseExpense = expense.reduce((acc, curr) => preciseAdd(acc, curr.total), 0);
-    const baseGstIn = income.reduce((acc, curr) => preciseAdd(acc, curr.gst), 0);
-    const baseGstOut = expense.reduce((acc, curr) => preciseAdd(acc, curr.gst), 0);
-
-    // Multi-month aggregation
-    const totalIncome = preciseMul(baseIncome, viewDuration);
-    const totalExpense = preciseMul(baseExpense, viewDuration);
-    const gstInput = preciseMul(baseGstIn, viewDuration);
-    const gstOutput = preciseMul(baseGstOut, viewDuration);
+    const totalIncome = filteredIncome.reduce((acc, curr) => preciseAdd(acc, curr.total), 0);
+    const totalExpense = filteredExpense.reduce((acc, curr) => preciseAdd(acc, curr.total), 0);
+    const gstInput = filteredIncome.reduce((acc, curr) => preciseAdd(acc, curr.gst), 0);
+    const gstOutput = filteredExpense.reduce((acc, curr) => preciseAdd(acc, curr.gst), 0);
     
     const gstPayable = preciseSub(gstInput, gstOutput);
     const profitLoss = preciseSub(totalIncome, totalExpense);
     const profitLossPercent = totalIncome > 0 ? (profitLoss / totalIncome) * 100 : 0;
 
-    // Projections
-    const projectedAnnual = preciseMul(baseIncome, 12);
-    const monthlyAverage = baseIncome;
+    // Projections (based on the selected month's data, not the whole period)
+    const singleMonthIncome = income.filter(item => {
+      const itemDate = parseItemDate(item.date);
+      return itemDate.getMonth() === MONTHS.indexOf(currentMonth) && 
+             itemDate.getFullYear() === parseInt(currentYear);
+    }).reduce((acc, curr) => preciseAdd(acc, curr.total), 0);
+
+    const projectedAnnual = preciseMul(singleMonthIncome, 12);
+    const monthlyAverage = viewDuration > 0 ? totalIncome / viewDuration : 0;
 
     return {
       totalIncome,
@@ -307,15 +379,15 @@ function Dashboard() {
       projectedAnnual,
       monthlyAverage
     };
-  }, [income, expense, viewDuration]);
+  }, [filteredIncome, filteredExpense, income, currentMonth, currentYear, viewDuration]);
 
   // Handlers
   const addIncome = async () => {
     if (!user) return;
     const newT: Transaction = {
       id: Math.random().toString(36).substr(2, 9),
-      date: new Date().toLocaleDateString('en-IN', { day: 'numeric', month: 'long' }),
-      description: "New Income",
+      date: new Date(parseInt(currentYear), MONTHS.indexOf(currentMonth), new Date().getDate()).toISOString(),
+      description: "",
       amount: 0,
       gst: 0,
       total: 0,
@@ -332,8 +404,8 @@ function Dashboard() {
     if (!user) return;
     const newT: Transaction = {
       id: Math.random().toString(36).substr(2, 9),
-      date: new Date().toLocaleDateString('en-IN', { day: 'numeric', month: 'long' }),
-      description: "New Expense",
+      date: new Date(parseInt(currentYear), MONTHS.indexOf(currentMonth), new Date().getDate()).toISOString(),
+      description: "",
       amount: 0,
       gst: 0,
       total: 0,
@@ -350,9 +422,9 @@ function Dashboard() {
     if (!user) return;
     const newL: Liability = {
       id: Math.random().toString(36).substr(2, 9),
-      date: new Date().toLocaleDateString('en-IN', { day: 'numeric', month: 'long' }),
+      date: new Date(parseInt(currentYear), MONTHS.indexOf(currentMonth), new Date().getDate()).toISOString(),
       account: "",
-      description: "New Credit",
+      description: "",
       amount: 0,
       type: 'credit',
       userId: user.uid,
@@ -367,9 +439,9 @@ function Dashboard() {
     if (!user) return;
     const newL: Liability = {
       id: Math.random().toString(36).substr(2, 9),
-      date: new Date().toLocaleDateString('en-IN', { day: 'numeric', month: 'long' }),
+      date: new Date(parseInt(currentYear), MONTHS.indexOf(currentMonth), new Date().getDate()).toISOString(),
       account: "",
-      description: "New Debit",
+      description: "",
       amount: 0,
       type: 'debit',
       userId: user.uid,
@@ -565,35 +637,38 @@ function Dashboard() {
             {/* Income Table */}
             <TableSection 
               title="Income" 
-              data={income} 
+              data={filteredIncome} 
               onAdd={addIncome}
               onUpdate={(id: string, f: any, v: any) => updateTransaction('income', id, f, v)}
               onDelete={deleteTransaction}
               totals={{ 
-                amount: income.reduce((a,c) => preciseAdd(a, c.amount), 0), 
-                gst: income.reduce((a,c) => preciseAdd(a, c.gst), 0), 
-                total: income.reduce((a,c) => preciseAdd(a, c.total), 0) 
+                amount: filteredIncome.reduce((a,c) => preciseAdd(a, c.amount), 0), 
+                gst: filteredIncome.reduce((a,c) => preciseAdd(a, c.gst), 0), 
+                total: filteredIncome.reduce((a,c) => preciseAdd(a, c.total), 0) 
               }}
             />
 
             {/* Expense Table */}
             <TableSection 
               title="Expense" 
-              data={expense} 
+              data={filteredExpense} 
               onAdd={addExpense}
               onUpdate={(id: string, f: any, v: any) => updateTransaction('expense', id, f, v)}
               onDelete={deleteTransaction}
               totals={{ 
-                amount: expense.reduce((a,c) => preciseAdd(a, c.amount), 0), 
-                gst: expense.reduce((a,c) => preciseAdd(a, c.gst), 0), 
-                total: expense.reduce((a,c) => preciseAdd(a, c.total), 0) 
+                amount: filteredExpense.reduce((a,c) => preciseAdd(a, c.amount), 0), 
+                gst: filteredExpense.reduce((a,c) => preciseAdd(a, c.gst), 0), 
+                total: filteredExpense.reduce((a,c) => preciseAdd(a, c.total), 0) 
               }}
             />
 
             {/* Liability Credit Table */}
             <LiabilityTable 
               title="Liability Credit" 
-              data={liabilityCredit} 
+              data={filteredLiabilityCredit.filter(l => {
+                const d = parseItemDate(l.date);
+                return d.getMonth() === MONTHS.indexOf(currentMonth) && d.getFullYear() === parseInt(currentYear);
+              })} 
               onAdd={addLiabilityCredit}
               onUpdate={(id: string, f: any, v: any) => updateLiability('credit', id, f, v)}
               onDelete={deleteLiability}
@@ -602,7 +677,10 @@ function Dashboard() {
             {/* Liability Debit Table */}
             <LiabilityTable 
               title="Liability Debit" 
-              data={liabilityDebit} 
+              data={filteredLiabilityDebit.filter(l => {
+                const d = parseItemDate(l.date);
+                return d.getMonth() === MONTHS.indexOf(currentMonth) && d.getFullYear() === parseInt(currentYear);
+              })} 
               onAdd={addLiabilityDebit}
               onUpdate={(id: string, f: any, v: any) => updateLiability('debit', id, f, v)}
               onDelete={deleteLiability}
@@ -638,15 +716,27 @@ function Dashboard() {
           {/* Due Summary Panel */}
           <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
             <div className="bg-[#1a365d] text-white p-3">
-              <h3 className="font-semibold text-[10px]">Due to Summary</h3>
+              <h3 className="font-semibold text-[10px]">Due to Summary (Cumulative)</h3>
             </div>
             <div className="p-3 space-y-2">
-              {aggregatedDueSummary.map((due, idx) => (
-                <div key={idx} className="bg-gray-50 p-1.5 rounded border border-gray-100 text-[10px] font-medium text-gray-600 flex justify-between">
-                  <span>{due.account}:</span>
-                  <span className="font-bold text-[#1a365d]">{formatCurrency(due.amount)}</span>
-                </div>
-              ))}
+              {aggregatedDueSummary.length === 0 ? (
+                <p className="text-[10px] text-gray-400 text-center py-2">No outstanding dues</p>
+              ) : (
+                <>
+                  {aggregatedDueSummary.map((due, idx) => (
+                    <div key={idx} className="bg-gray-50 p-1.5 rounded border border-gray-100 text-[10px] font-medium text-gray-600 flex justify-between items-center">
+                      <span className="truncate mr-2">{due.account}:</span>
+                      <span className={`font-bold ${due.amount > 0 ? 'text-[#1a365d]' : 'text-green-600'}`}>
+                        {formatCurrency(due.amount)}
+                      </span>
+                    </div>
+                  ))}
+                  <div className="pt-2 mt-2 border-t border-gray-200 flex justify-between text-[10px] font-bold text-[#1a365d]">
+                    <span>TOTAL BALANCE:</span>
+                    <span>{formatCurrency(aggregatedDueSummary.reduce((acc, curr) => acc + curr.amount, 0))}</span>
+                  </div>
+                </>
+              )}
             </div>
           </div>
         </div>
@@ -857,7 +947,10 @@ function TableSection({ title, data, onAdd, onUpdate, onDelete, totals }: any) {
               {data.map((item: any) => (
                 <tr key={item.id} className="hover:bg-gray-50 group transition-colors">
                   <td className="p-2 w-10 text-center">
-                    <button className="opacity-0 group-hover:opacity-100 text-blue-400 hover:text-blue-600 transition-all">
+                    <button 
+                      onClick={() => document.getElementById(`desc-${item.id}`)?.focus()}
+                      className="text-blue-400 hover:text-blue-600 transition-all"
+                    >
                       <Edit2 size={12} />
                     </button>
                   </td>
@@ -871,9 +964,10 @@ function TableSection({ title, data, onAdd, onUpdate, onDelete, totals }: any) {
                   </td>
                   <td className="p-2">
                     <input 
-                      className="w-full bg-transparent outline-none text-xs" 
+                      id={`desc-${item.id}`}
+                      className="w-full bg-transparent outline-none text-xs font-medium" 
                       value={item.description} 
-                      placeholder="Description"
+                      placeholder={title === 'Income' ? "New Income" : "New Expense"}
                       onChange={(e) => onUpdate(item.id, 'description', e.target.value)}
                     />
                   </td>
@@ -897,7 +991,7 @@ function TableSection({ title, data, onAdd, onUpdate, onDelete, totals }: any) {
                   </td>
                   <td className="p-2 text-xs font-bold text-gray-700">₹{item.total}</td>
                   <td className="p-2 w-10 text-center">
-                    <button onClick={() => onDelete(item.id)} className="opacity-0 group-hover:opacity-100 text-red-400 hover:text-red-600 transition-all">
+                    <button onClick={() => onDelete(item.id)} className="text-red-400 hover:text-red-600 transition-all">
                       <Trash2 size={12} />
                     </button>
                   </td>
@@ -947,7 +1041,10 @@ function LiabilityTable({ title, data, onAdd, onUpdate, onDelete }: any) {
               {data.map((item: any) => (
                 <tr key={item.id} className="hover:bg-gray-50 group transition-colors">
                   <td className="p-2 w-10 text-center">
-                    <button className="opacity-0 group-hover:opacity-100 text-blue-400 hover:text-blue-600 transition-all">
+                    <button 
+                      onClick={() => document.getElementById(`liab-${item.id}`)?.focus()}
+                      className="text-blue-400 hover:text-blue-600 transition-all"
+                    >
                       <Edit2 size={12} />
                     </button>
                   </td>
@@ -961,7 +1058,8 @@ function LiabilityTable({ title, data, onAdd, onUpdate, onDelete }: any) {
                   </td>
                   <td className="p-2">
                     <input 
-                      className="w-full bg-transparent outline-none text-xs" 
+                      id={`liab-${item.id}`}
+                      className="w-full bg-transparent outline-none text-xs font-medium" 
                       value={item.account} 
                       placeholder="Account"
                       onChange={(e) => onUpdate(item.id, 'account', e.target.value)} 
@@ -985,7 +1083,7 @@ function LiabilityTable({ title, data, onAdd, onUpdate, onDelete }: any) {
                     />
                   </td>
                   <td className="p-2 w-10 text-center">
-                    <button onClick={() => onDelete(item.id)} className="opacity-0 group-hover:opacity-100 text-red-400 hover:text-red-600 transition-all">
+                    <button onClick={() => onDelete(item.id)} className="text-red-400 hover:text-red-600 transition-all">
                       <Trash2 size={12} />
                     </button>
                   </td>
