@@ -24,30 +24,13 @@ import {
   AlertCircle
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
-import { 
-  signInWithPopup, 
-  GoogleAuthProvider, 
-  onAuthStateChanged, 
-  signOut, 
-  User 
-} from "firebase/auth";
-import { 
-  collection, 
-  query, 
-  where, 
-  onSnapshot, 
-  addDoc, 
-  updateDoc, 
-  deleteDoc, 
-  doc, 
-  setDoc, 
-  getDoc,
-  serverTimestamp,
-  orderBy
-} from "firebase/firestore";
-import { auth, db } from "./firebase";
 
 // --- Types ---
+
+interface User {
+  uid: string;
+  email: string;
+}
 
 interface Transaction {
   id: string;
@@ -56,6 +39,9 @@ interface Transaction {
   amount: number;
   gst: number;
   total: number;
+  type?: 'income' | 'expense';
+  userId?: string;
+  createdAt?: string;
 }
 
 interface Liability {
@@ -64,53 +50,21 @@ interface Liability {
   account: string;
   description: string;
   amount: number;
+  type?: 'credit' | 'debit';
+  userId?: string;
+  createdAt?: string;
 }
 
 interface Account {
   id: string;
   name: string;
+  userId?: string;
+  createdAt?: string;
 }
 
 interface DueSummary {
   account: string;
   amount: number;
-}
-
-// --- Firebase Error Handling ---
-
-enum OperationType {
-  CREATE = 'create',
-  UPDATE = 'update',
-  DELETE = 'delete',
-  LIST = 'list',
-  GET = 'get',
-  WRITE = 'write',
-}
-
-interface FirestoreErrorInfo {
-  error: string;
-  operationType: OperationType;
-  path: string | null;
-  authInfo: {
-    userId: string | undefined;
-    email: string | null | undefined;
-    emailVerified: boolean | undefined;
-  }
-}
-
-function handleFirestoreError(error: unknown, operationType: OperationType, path: string | null) {
-  const errInfo: FirestoreErrorInfo = {
-    error: error instanceof Error ? error.message : String(error),
-    authInfo: {
-      userId: auth.currentUser?.uid,
-      email: auth.currentUser?.email,
-      emailVerified: auth.currentUser?.emailVerified,
-    },
-    operationType,
-    path
-  };
-  console.error('Firestore Error: ', JSON.stringify(errInfo));
-  // In a real app, we might show a toast or a specific UI error
 }
 
 // --- Auth Context ---
@@ -127,55 +81,23 @@ interface AuthContextType {
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
-  const [user, setUser] = useState<User | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [user, setUser] = useState<User | null>(() => {
+    const saved = localStorage.getItem('fintech_user');
+    return saved ? JSON.parse(saved) : null;
+  });
+  const [loading, setLoading] = useState(false);
   const [authError, setAuthError] = useState<string | null>(null);
 
-  useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, async (user) => {
-      if (user) {
-        // Ensure user profile exists in Firestore
-        const userDoc = doc(db, 'users', user.uid);
-        const snap = await getDoc(userDoc);
-        if (!snap.exists()) {
-          await setDoc(userDoc, {
-            uid: user.uid,
-            email: user.email,
-            role: 'user'
-          });
-        }
-      }
-      setUser(user);
-      setLoading(false);
-    });
-    return unsubscribe;
-  }, []);
-
   const login = async () => {
-    const provider = new GoogleAuthProvider();
     setAuthError(null);
-    try {
-      await signInWithPopup(auth, provider);
-    } catch (error: any) {
-      if (error.code === 'auth/popup-closed-by-user') {
-        // Silent fail or friendly message
-        setAuthError("Sign-in window was closed before completion. Please try again.");
-      } else if (error.code === 'auth/cancelled-popup-request') {
-        // Another common one
-        setAuthError("Sign-in request was cancelled.");
-      } else {
-        console.error("Login failed", error);
-        setAuthError("An unexpected error occurred during login. Please try again.");
-      }
-    }
+    const mockUser = { uid: 'local-user', email: 'demo@example.com' };
+    setUser(mockUser);
+    localStorage.setItem('fintech_user', JSON.stringify(mockUser));
   };
 
   const logout = async () => {
-    try {
-      await signOut(auth);
-    } catch (error) {
-      console.error("Logout failed", error);
-    }
+    setUser(null);
+    localStorage.removeItem('fintech_user');
   };
 
   return (
@@ -274,47 +196,66 @@ function Dashboard() {
   const [viewDuration, setViewDuration] = useState(1); // 1, 3, 4, 6 months
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
 
-  // --- Real-time Sync ---
+  // --- Local Storage Sync ---
   useEffect(() => {
     if (!user) return;
 
-    // Transactions Sync
-    const qTransactions = query(
-      collection(db, "transactions"), 
-      where("userId", "==", user.uid),
-      orderBy("createdAt", "desc")
-    );
-    const unsubTransactions = onSnapshot(qTransactions, (snapshot) => {
-      const all = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Transaction & { type: string }));
+    const savedTransactions = localStorage.getItem(`transactions_${user.uid}`);
+    const savedLiabilities = localStorage.getItem(`liabilities_${user.uid}`);
+    const savedAccounts = localStorage.getItem(`accounts_${user.uid}`);
+
+    if (savedTransactions) {
+      const all = JSON.parse(savedTransactions) as (Transaction & { type: string })[];
       setIncome(all.filter(t => t.type === 'income'));
       setExpense(all.filter(t => t.type === 'expense'));
-    }, (error) => handleFirestoreError(error, OperationType.LIST, "transactions"));
+    } else {
+      // Load initial data if empty
+      const initial = [
+        ...INITIAL_INCOME.map(t => ({ ...t, type: 'income', userId: user.uid })),
+        ...INITIAL_EXPENSE.map(t => ({ ...t, type: 'expense', userId: user.uid }))
+      ];
+      localStorage.setItem(`transactions_${user.uid}`, JSON.stringify(initial));
+      setIncome(INITIAL_INCOME);
+      setExpense(INITIAL_EXPENSE);
+    }
 
-    // Liabilities Sync
-    const qLiabilities = query(
-      collection(db, "liabilities"), 
-      where("userId", "==", user.uid),
-      orderBy("createdAt", "desc")
-    );
-    const unsubLiabilities = onSnapshot(qLiabilities, (snapshot) => {
-      const all = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Liability & { type: string }));
+    if (savedLiabilities) {
+      const all = JSON.parse(savedLiabilities) as (Liability & { type: string })[];
       setLiabilityCredit(all.filter(l => l.type === 'credit'));
       setLiabilityDebit(all.filter(l => l.type === 'debit'));
-    }, (error) => handleFirestoreError(error, OperationType.LIST, "liabilities"));
+    } else {
+      const initial = [
+        ...INITIAL_LIABILITY_CREDIT.map(l => ({ ...l, type: 'credit', userId: user.uid })),
+        ...INITIAL_LIABILITY_DEBIT.map(l => ({ ...l, type: 'debit', userId: user.uid }))
+      ];
+      localStorage.setItem(`liabilities_${user.uid}`, JSON.stringify(initial));
+      setLiabilityCredit(INITIAL_LIABILITY_CREDIT);
+      setLiabilityDebit(INITIAL_LIABILITY_DEBIT);
+    }
 
-    // Accounts Sync (We'll just derive accounts from liabilities for now or keep a separate collection)
-    // For now, let's keep a separate collection for accounts
-    const qAccounts = query(collection(db, "accounts"), where("userId", "==", user.uid));
-    const unsubAccounts = onSnapshot(qAccounts, (snapshot) => {
-      setAccounts(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Account)));
-    }, (error) => handleFirestoreError(error, OperationType.LIST, "accounts"));
-
-    return () => {
-      unsubTransactions();
-      unsubLiabilities();
-      unsubAccounts();
-    };
+    if (savedAccounts) {
+      setAccounts(JSON.parse(savedAccounts));
+    } else {
+      localStorage.setItem(`accounts_${user.uid}`, JSON.stringify(INITIAL_ACCOUNTS));
+      setAccounts(INITIAL_ACCOUNTS);
+    }
   }, [user]);
+
+  // Helper to save data
+  const saveTransactions = (newTransactions: any[]) => {
+    if (!user) return;
+    localStorage.setItem(`transactions_${user.uid}`, JSON.stringify(newTransactions));
+  };
+
+  const saveLiabilities = (newLiabilities: any[]) => {
+    if (!user) return;
+    localStorage.setItem(`liabilities_${user.uid}`, JSON.stringify(newLiabilities));
+  };
+
+  const saveAccounts = (newAccounts: any[]) => {
+    if (!user) return;
+    localStorage.setItem(`accounts_${user.uid}`, JSON.stringify(newAccounts));
+  };
 
   // --- Aggregated Due Summary ---
   const aggregatedDueSummary = useMemo(() => {
@@ -371,146 +312,158 @@ function Dashboard() {
   // Handlers
   const addIncome = async () => {
     if (!user) return;
-    try {
-      await addDoc(collection(db, "transactions"), {
-        date: new Date().toLocaleDateString('en-IN', { day: 'numeric', month: 'long' }),
-        description: "New Income",
-        amount: 0,
-        gst: 0,
-        total: 0,
-        type: 'income',
-        userId: user.uid,
-        createdAt: serverTimestamp()
-      });
-    } catch (error) {
-      handleFirestoreError(error, OperationType.CREATE, "transactions");
-    }
+    const newT: Transaction = {
+      id: Math.random().toString(36).substr(2, 9),
+      date: new Date().toLocaleDateString('en-IN', { day: 'numeric', month: 'long' }),
+      description: "New Income",
+      amount: 0,
+      gst: 0,
+      total: 0,
+      type: 'income',
+      userId: user.uid,
+      createdAt: new Date().toISOString()
+    };
+    const updated = [...income, newT];
+    setIncome(updated);
+    saveTransactions([...updated, ...expense.map(e => ({ ...e, type: 'expense' }))]);
   };
 
   const addExpense = async () => {
     if (!user) return;
-    try {
-      await addDoc(collection(db, "transactions"), {
-        date: new Date().toLocaleDateString('en-IN', { day: 'numeric', month: 'long' }),
-        description: "New Expense",
-        amount: 0,
-        gst: 0,
-        total: 0,
-        type: 'expense',
-        userId: user.uid,
-        createdAt: serverTimestamp()
-      });
-    } catch (error) {
-      handleFirestoreError(error, OperationType.CREATE, "transactions");
-    }
+    const newT: Transaction = {
+      id: Math.random().toString(36).substr(2, 9),
+      date: new Date().toLocaleDateString('en-IN', { day: 'numeric', month: 'long' }),
+      description: "New Expense",
+      amount: 0,
+      gst: 0,
+      total: 0,
+      type: 'expense',
+      userId: user.uid,
+      createdAt: new Date().toISOString()
+    };
+    const updated = [...expense, newT];
+    setExpense(updated);
+    saveTransactions([...income.map(i => ({ ...i, type: 'income' })), ...updated]);
   };
 
   const addLiabilityCredit = async () => {
     if (!user) return;
-    try {
-      await addDoc(collection(db, "liabilities"), {
-        date: new Date().toLocaleDateString('en-IN', { day: 'numeric', month: 'long' }),
-        account: "",
-        description: "New Credit",
-        amount: 0,
-        type: 'credit',
-        userId: user.uid,
-        createdAt: serverTimestamp()
-      });
-    } catch (error) {
-      handleFirestoreError(error, OperationType.CREATE, "liabilities");
-    }
+    const newL: Liability = {
+      id: Math.random().toString(36).substr(2, 9),
+      date: new Date().toLocaleDateString('en-IN', { day: 'numeric', month: 'long' }),
+      account: "",
+      description: "New Credit",
+      amount: 0,
+      type: 'credit',
+      userId: user.uid,
+      createdAt: new Date().toISOString()
+    };
+    const updated = [...liabilityCredit, newL];
+    setLiabilityCredit(updated);
+    saveLiabilities([...updated, ...liabilityDebit.map(d => ({ ...d, type: 'debit' }))]);
   };
 
   const addLiabilityDebit = async () => {
     if (!user) return;
-    try {
-      await addDoc(collection(db, "liabilities"), {
-        date: new Date().toLocaleDateString('en-IN', { day: 'numeric', month: 'long' }),
-        account: "",
-        description: "New Debit",
-        amount: 0,
-        type: 'debit',
-        userId: user.uid,
-        createdAt: serverTimestamp()
-      });
-    } catch (error) {
-      handleFirestoreError(error, OperationType.CREATE, "liabilities");
-    }
+    const newL: Liability = {
+      id: Math.random().toString(36).substr(2, 9),
+      date: new Date().toLocaleDateString('en-IN', { day: 'numeric', month: 'long' }),
+      account: "",
+      description: "New Debit",
+      amount: 0,
+      type: 'debit',
+      userId: user.uid,
+      createdAt: new Date().toISOString()
+    };
+    const updated = [...liabilityDebit, newL];
+    setLiabilityDebit(updated);
+    saveLiabilities([...liabilityCredit.map(c => ({ ...c, type: 'credit' })), ...updated]);
   };
 
   const addAccount = async () => {
     if (!user) return;
     const name = prompt("Enter account name:");
     if (name) {
-      try {
-        await addDoc(collection(db, "accounts"), {
-          name,
-          userId: user.uid,
-          createdAt: serverTimestamp()
-        });
-      } catch (error) {
-        handleFirestoreError(error, OperationType.CREATE, "accounts");
-      }
+      const newAcc: Account = {
+        id: Math.random().toString(36).substr(2, 9),
+        name,
+        userId: user.uid,
+        createdAt: new Date().toISOString()
+      };
+      const updated = [...accounts, newAcc];
+      setAccounts(updated);
+      saveAccounts(updated);
     }
   };
 
   const updateTransaction = async (type: 'income' | 'expense', id: string, field: keyof Transaction, value: any) => {
-    try {
-      const transactionRef = doc(db, "transactions", id);
-      const val = (field === 'amount' || field === 'gst') ? Number(value) || 0 : value;
-      
-      const updateData: any = { [field]: val };
-      
-      // Recalculate total if amount or gst changed
-      if (field === 'amount' || field === 'gst') {
-        const snap = await getDoc(transactionRef);
-        const currentData = snap.data();
-        if (currentData) {
-          const amount = field === 'amount' ? val : currentData.amount;
-          const gst = field === 'gst' ? val : currentData.gst;
-          updateData.total = preciseAdd(Number(amount), Number(gst));
+    const list = type === 'income' ? income : expense;
+    const updatedList = list.map(t => {
+      if (t.id === id) {
+        const val = (field === 'amount' || field === 'gst') ? Number(value) || 0 : value;
+        const newT = { ...t, [field]: val };
+        if (field === 'amount' || field === 'gst') {
+          newT.total = preciseAdd(Number(newT.amount), Number(newT.gst));
         }
+        return newT;
       }
-      
-      await updateDoc(transactionRef, updateData);
-    } catch (error) {
-      handleFirestoreError(error, OperationType.UPDATE, `transactions/${id}`);
+      return t;
+    });
+
+    if (type === 'income') {
+      setIncome(updatedList);
+      saveTransactions([...updatedList, ...expense.map(e => ({ ...e, type: 'expense' }))]);
+    } else {
+      setExpense(updatedList);
+      saveTransactions([...income.map(i => ({ ...i, type: 'income' })), ...updatedList]);
     }
   };
 
   const updateLiability = async (type: 'credit' | 'debit', id: string, field: keyof Liability, value: any) => {
-    try {
-      const liabilityRef = doc(db, "liabilities", id);
-      const val = field === 'amount' ? Number(value) || 0 : value;
-      await updateDoc(liabilityRef, { [field]: val });
-    } catch (error) {
-      handleFirestoreError(error, OperationType.UPDATE, `liabilities/${id}`);
+    const list = type === 'credit' ? liabilityCredit : liabilityDebit;
+    const updatedList = list.map(l => {
+      if (l.id === id) {
+        const val = field === 'amount' ? Number(value) || 0 : value;
+        return { ...l, [field]: val };
+      }
+      return l;
+    });
+
+    if (type === 'credit') {
+      setLiabilityCredit(updatedList);
+      saveLiabilities([...updatedList, ...liabilityDebit.map(d => ({ ...d, type: 'debit' }))]);
+    } else {
+      setLiabilityDebit(updatedList);
+      saveLiabilities([...liabilityCredit.map(c => ({ ...c, type: 'credit' })), ...updatedList]);
     }
   };
 
   const deleteTransaction = async (id: string) => {
-    try {
-      await deleteDoc(doc(db, "transactions", id));
-    } catch (error) {
-      handleFirestoreError(error, OperationType.DELETE, `transactions/${id}`);
-    }
+    const newIncome = income.filter(t => t.id !== id);
+    const newExpense = expense.filter(t => t.id !== id);
+    setIncome(newIncome);
+    setExpense(newExpense);
+    saveTransactions([
+      ...newIncome.map(i => ({ ...i, type: 'income' })),
+      ...newExpense.map(e => ({ ...e, type: 'expense' }))
+    ]);
   };
 
   const deleteLiability = async (id: string) => {
-    try {
-      await deleteDoc(doc(db, "liabilities", id));
-    } catch (error) {
-      handleFirestoreError(error, OperationType.DELETE, `liabilities/${id}`);
-    }
+    const newCredit = liabilityCredit.filter(l => l.id !== id);
+    const newDebit = liabilityDebit.filter(l => l.id !== id);
+    setLiabilityCredit(newCredit);
+    setLiabilityDebit(newDebit);
+    saveLiabilities([
+      ...newCredit.map(c => ({ ...c, type: 'credit' })),
+      ...newDebit.map(d => ({ ...d, type: 'debit' }))
+    ]);
   };
 
   const deleteAccount = async (id: string) => {
-    try {
-      await deleteDoc(doc(db, "accounts", id));
-    } catch (error) {
-      handleFirestoreError(error, OperationType.DELETE, `accounts/${id}`);
-    }
+    const updated = accounts.filter(a => a.id !== id);
+    setAccounts(updated);
+    saveAccounts(updated);
   };
 
   return (
@@ -730,7 +683,7 @@ function Dashboard() {
                     </div>
                     <div>
                       <p className="text-sm font-bold text-gray-800">{user?.email}</p>
-                      <p className="text-[10px] text-gray-500">Authenticated via Google</p>
+                      <p className="text-[10px] text-gray-500">Local Session</p>
                     </div>
                   </div>
                 </div>
@@ -800,7 +753,7 @@ function Login() {
             <div className="p-4 bg-blue-50 rounded-2xl border border-blue-100 flex items-start gap-3">
               <AlertCircle className="text-blue-600 shrink-0" size={20} />
               <p className="text-xs text-blue-800 leading-relaxed">
-                This dashboard uses bank-grade encryption and Google Authentication to keep your data private and secure.
+                This dashboard uses local storage to keep your data private on this device.
               </p>
             </div>
           </div>
@@ -809,8 +762,8 @@ function Login() {
             onClick={login}
             className="w-full bg-[#1a365d] text-white py-4 rounded-2xl font-bold hover:bg-[#2a4a7d] transition-all flex items-center justify-center gap-3 shadow-lg group"
           >
-            <img src="https://www.google.com/favicon.ico" alt="Google" className="w-5 h-5 group-hover:scale-110 transition-transform" />
-            Continue with Google
+            <Lock size={20} className="group-hover:scale-110 transition-transform" />
+            Continue with Local Session
           </button>
 
           <p className="text-center text-[10px] text-gray-400">
