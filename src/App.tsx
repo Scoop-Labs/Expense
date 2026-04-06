@@ -4,7 +4,7 @@
  */
 
 import * as React from "react";
-import { useState, useMemo, useEffect, createContext, useContext, Component } from "react";
+import { useState, useMemo, useEffect, createContext, useContext, Component, useCallback } from "react";
 import { 
   Settings, 
   Plus, 
@@ -21,7 +21,9 @@ import {
   LogOut,
   Lock,
   Mail,
-  AlertCircle
+  AlertCircle,
+  Undo2,
+  Redo2
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 
@@ -36,9 +38,9 @@ interface Transaction {
   id: string;
   date: string;
   description: string;
-  amount: number;
-  gst: number;
-  total: number;
+  amount: number | string;
+  gst: number | string;
+  total: number | string;
   type?: 'income' | 'expense';
   userId?: string;
   createdAt?: string;
@@ -49,7 +51,7 @@ interface Liability {
   date: string;
   account: string;
   description: string;
-  amount: number;
+  amount: number | string;
   type?: 'credit' | 'debit';
   userId?: string;
   createdAt?: string;
@@ -60,6 +62,13 @@ interface Account {
   name: string;
   userId?: string;
   createdAt?: string;
+}
+
+interface HistoryState {
+  income: Transaction[];
+  expense: Transaction[];
+  liabilityCredit: Liability[];
+  liabilityDebit: Liability[];
 }
 
 interface DueSummary {
@@ -127,16 +136,44 @@ const formatCurrency = (num: number) => {
   }).format(num);
 };
 
-const preciseAdd = (a: number, b: number) => {
-  return Math.round((Number(a) + Number(b)) * 100) / 100;
+const preciseAdd = (a: number | string, b: number | string) => {
+  const valA = Number(a) || 0;
+  const valB = Number(b) || 0;
+  return Math.round((valA + valB) * 100) / 100;
 };
 
-const preciseSub = (a: number, b: number) => {
-  return Math.round((Number(a) - Number(b)) * 100) / 100;
+const preciseSub = (a: number | string, b: number | string) => {
+  const valA = Number(a) || 0;
+  const valB = Number(b) || 0;
+  return Math.round((valA - valB) * 100) / 100;
 };
 
-const preciseMul = (a: number, b: number) => {
-  return Math.round((Number(a) * Number(b)) * 100) / 100;
+const preciseMul = (a: number | string, b: number | string) => {
+  const valA = Number(a) || 0;
+  const valB = Number(b) || 0;
+  return Math.round((valA * valB) * 100) / 100;
+};
+
+const getOrdinal = (n: number) => {
+  const s = ["th", "st", "nd", "rd"];
+  const v = n % 100;
+  return s[(v - 20) % 10] || s[v] || s[0];
+};
+
+const formatReadableDate = (day: number, month: string) => {
+  return `${day}${getOrdinal(day)} ${month}`;
+};
+
+const formatIfISO = (dateStr: string) => {
+  if (!dateStr) return "";
+  const date = new Date(dateStr);
+  // Check if it's a valid date and looks like an ISO string (contains 'T')
+  if (!isNaN(date.getTime()) && dateStr.includes('T')) {
+    const day = date.getDate();
+    const month = MONTHS[date.getMonth()];
+    return formatReadableDate(day, month);
+  }
+  return dateStr;
 };
 
 // --- Initial Data ---
@@ -199,6 +236,53 @@ function Dashboard() {
   const [viewDuration, setViewDuration] = useState(1); // 1, 3, 4, 6 months
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
 
+  // --- Undo/Redo State ---
+  const [history, setHistory] = useState<HistoryState[]>([]);
+  const [historyIndex, setHistoryIndex] = useState(-1);
+
+  const pushToHistory = (newState: HistoryState) => {
+    setHistory(prev => {
+      const newHistory = prev.slice(0, historyIndex + 1);
+      newHistory.push(newState);
+      if (newHistory.length > 50) newHistory.shift();
+      return newHistory;
+    });
+    setHistoryIndex(prev => {
+      const nextIdx = prev + 1;
+      return nextIdx > 49 ? 49 : nextIdx;
+    });
+  };
+
+  const undo = useCallback(() => {
+    if (historyIndex > 0) {
+      const prevState = history[historyIndex - 1];
+      setIncome(prevState.income);
+      setExpense(prevState.expense);
+      setLiabilityCredit(prevState.liabilityCredit);
+      setLiabilityDebit(prevState.liabilityDebit);
+      setHistoryIndex(historyIndex - 1);
+      
+      // Save to localStorage
+      saveTransactions([...prevState.income.map(i => ({ ...i, type: 'income' })), ...prevState.expense.map(e => ({ ...e, type: 'expense' }))]);
+      saveLiabilities([...prevState.liabilityCredit.map(c => ({ ...c, type: 'credit' })), ...prevState.liabilityDebit.map(d => ({ ...d, type: 'debit' }))]);
+    }
+  }, [historyIndex, history, user]);
+
+  const redo = useCallback(() => {
+    if (historyIndex < history.length - 1) {
+      const nextState = history[historyIndex + 1];
+      setIncome(nextState.income);
+      setExpense(nextState.expense);
+      setLiabilityCredit(nextState.liabilityCredit);
+      setLiabilityDebit(nextState.liabilityDebit);
+      setHistoryIndex(historyIndex + 1);
+
+      // Save to localStorage
+      saveTransactions([...nextState.income.map(i => ({ ...i, type: 'income' })), ...nextState.expense.map(e => ({ ...e, type: 'expense' }))]);
+      saveLiabilities([...nextState.liabilityCredit.map(c => ({ ...c, type: 'credit' })), ...nextState.liabilityDebit.map(d => ({ ...d, type: 'debit' }))]);
+    }
+  }, [historyIndex, history, user]);
+
   // --- Local Storage Sync ---
   useEffect(() => {
     if (!user) return;
@@ -207,10 +291,17 @@ function Dashboard() {
     const savedLiabilities = localStorage.getItem(`liabilities_${user.uid}`);
     const savedAccounts = localStorage.getItem(`accounts_${user.uid}`);
 
+    let initialIncome = [];
+    let initialExpense = [];
     if (savedTransactions) {
       const all = JSON.parse(savedTransactions) as (Transaction & { type: string })[];
-      setIncome(all.filter(t => t.type === 'income'));
-      setExpense(all.filter(t => t.type === 'expense'));
+      const formatted = all.map(t => ({ ...t, date: formatIfISO(t.date) }));
+      const inc = formatted.filter(t => t.type === 'income');
+      const exp = formatted.filter(t => t.type === 'expense');
+      setIncome(inc);
+      setExpense(exp);
+      initialIncome = inc;
+      initialExpense = exp;
     } else {
       // Load initial data if empty
       const initial = [
@@ -220,12 +311,21 @@ function Dashboard() {
       localStorage.setItem(`transactions_${user.uid}`, JSON.stringify(initial));
       setIncome(INITIAL_INCOME);
       setExpense(INITIAL_EXPENSE);
+      initialIncome = INITIAL_INCOME;
+      initialExpense = INITIAL_EXPENSE;
     }
 
+    let initialCredit = [];
+    let initialDebit = [];
     if (savedLiabilities) {
       const all = JSON.parse(savedLiabilities) as (Liability & { type: string })[];
-      setLiabilityCredit(all.filter(l => l.type === 'credit'));
-      setLiabilityDebit(all.filter(l => l.type === 'debit'));
+      const formatted = all.map(l => ({ ...l, date: formatIfISO(l.date) }));
+      const cr = formatted.filter(l => l.type === 'credit');
+      const db = formatted.filter(l => l.type === 'debit');
+      setLiabilityCredit(cr);
+      setLiabilityDebit(db);
+      initialCredit = cr;
+      initialDebit = db;
     } else {
       const initial = [
         ...INITIAL_LIABILITY_CREDIT.map(l => ({ ...l, type: 'credit', userId: user.uid })),
@@ -234,7 +334,13 @@ function Dashboard() {
       localStorage.setItem(`liabilities_${user.uid}`, JSON.stringify(initial));
       setLiabilityCredit(INITIAL_LIABILITY_CREDIT);
       setLiabilityDebit(INITIAL_LIABILITY_DEBIT);
+      initialCredit = INITIAL_LIABILITY_CREDIT;
+      initialDebit = INITIAL_LIABILITY_DEBIT;
     }
+
+    // Initialize history
+    setHistory([{ income: initialIncome, expense: initialExpense, liabilityCredit: initialCredit, liabilityDebit: initialDebit }]);
+    setHistoryIndex(0);
 
     if (savedAccounts) {
       setAccounts(JSON.parse(savedAccounts));
@@ -243,6 +349,24 @@ function Dashboard() {
       setAccounts(INITIAL_ACCOUNTS);
     }
   }, [user]);
+
+  // --- Keyboard Shortcuts ---
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z') {
+        if (e.shiftKey) {
+          redo();
+        } else {
+          undo();
+        }
+      } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'y') {
+        redo();
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [undo, redo]);
 
   // Helper to save data
   const saveTransactions = (newTransactions: any[]) => {
@@ -382,15 +506,16 @@ function Dashboard() {
   }, [filteredIncome, filteredExpense, income, currentMonth, currentYear, viewDuration]);
 
   // Handlers
-  const addIncome = async () => {
+  const addIncome = async (data?: Partial<Transaction>) => {
     if (!user) return;
+    const day = new Date().getDate();
     const newT: Transaction = {
       id: Math.random().toString(36).substr(2, 9),
-      date: new Date(parseInt(currentYear), MONTHS.indexOf(currentMonth), new Date().getDate()).toISOString(),
-      description: "",
-      amount: 0,
-      gst: 0,
-      total: 0,
+      date: formatReadableDate(day, currentMonth),
+      description: data?.description || "",
+      amount: Number(data?.amount) || 0,
+      gst: Number(data?.gst) || 0,
+      total: preciseAdd(Number(data?.amount || 0), Number(data?.gst || 0)),
       type: 'income',
       userId: user.uid,
       createdAt: new Date().toISOString()
@@ -398,17 +523,19 @@ function Dashboard() {
     const updated = [...income, newT];
     setIncome(updated);
     saveTransactions([...updated, ...expense.map(e => ({ ...e, type: 'expense' }))]);
+    pushToHistory({ income: updated, expense, liabilityCredit, liabilityDebit });
   };
 
-  const addExpense = async () => {
+  const addExpense = async (data?: Partial<Transaction>) => {
     if (!user) return;
+    const day = new Date().getDate();
     const newT: Transaction = {
       id: Math.random().toString(36).substr(2, 9),
-      date: new Date(parseInt(currentYear), MONTHS.indexOf(currentMonth), new Date().getDate()).toISOString(),
-      description: "",
-      amount: 0,
-      gst: 0,
-      total: 0,
+      date: formatReadableDate(day, currentMonth),
+      description: data?.description || "",
+      amount: Number(data?.amount) || 0,
+      gst: Number(data?.gst) || 0,
+      total: preciseAdd(Number(data?.amount || 0), Number(data?.gst || 0)),
       type: 'expense',
       userId: user.uid,
       createdAt: new Date().toISOString()
@@ -416,16 +543,18 @@ function Dashboard() {
     const updated = [...expense, newT];
     setExpense(updated);
     saveTransactions([...income.map(i => ({ ...i, type: 'income' })), ...updated]);
+    pushToHistory({ income, expense: updated, liabilityCredit, liabilityDebit });
   };
 
-  const addLiabilityCredit = async () => {
+  const addLiabilityCredit = async (data?: Partial<Liability>) => {
     if (!user) return;
+    const day = new Date().getDate();
     const newL: Liability = {
       id: Math.random().toString(36).substr(2, 9),
-      date: new Date(parseInt(currentYear), MONTHS.indexOf(currentMonth), new Date().getDate()).toISOString(),
-      account: "",
-      description: "",
-      amount: 0,
+      date: formatReadableDate(day, currentMonth),
+      account: data?.account || "",
+      description: data?.description || "",
+      amount: Number(data?.amount) || 0,
       type: 'credit',
       userId: user.uid,
       createdAt: new Date().toISOString()
@@ -433,16 +562,18 @@ function Dashboard() {
     const updated = [...liabilityCredit, newL];
     setLiabilityCredit(updated);
     saveLiabilities([...updated, ...liabilityDebit.map(d => ({ ...d, type: 'debit' }))]);
+    pushToHistory({ income, expense, liabilityCredit: updated, liabilityDebit });
   };
 
-  const addLiabilityDebit = async () => {
+  const addLiabilityDebit = async (data?: Partial<Liability>) => {
     if (!user) return;
+    const day = new Date().getDate();
     const newL: Liability = {
       id: Math.random().toString(36).substr(2, 9),
-      date: new Date(parseInt(currentYear), MONTHS.indexOf(currentMonth), new Date().getDate()).toISOString(),
-      account: "",
-      description: "",
-      amount: 0,
+      date: formatReadableDate(day, currentMonth),
+      account: data?.account || "",
+      description: data?.description || "",
+      amount: Number(data?.amount) || 0,
       type: 'debit',
       userId: user.uid,
       createdAt: new Date().toISOString()
@@ -450,6 +581,7 @@ function Dashboard() {
     const updated = [...liabilityDebit, newL];
     setLiabilityDebit(updated);
     saveLiabilities([...liabilityCredit.map(c => ({ ...c, type: 'credit' })), ...updated]);
+    pushToHistory({ income, expense, liabilityCredit, liabilityDebit: updated });
   };
 
   const addAccount = async () => {
@@ -472,10 +604,9 @@ function Dashboard() {
     const list = type === 'income' ? income : expense;
     const updatedList = list.map(t => {
       if (t.id === id) {
-        const val = (field === 'amount' || field === 'gst') ? Number(value) || 0 : value;
-        const newT = { ...t, [field]: val };
+        const newT = { ...t, [field]: value };
         if (field === 'amount' || field === 'gst') {
-          newT.total = preciseAdd(Number(newT.amount), Number(newT.gst));
+          newT.total = preciseAdd(newT.amount, newT.gst);
         }
         return newT;
       }
@@ -485,9 +616,11 @@ function Dashboard() {
     if (type === 'income') {
       setIncome(updatedList);
       saveTransactions([...updatedList, ...expense.map(e => ({ ...e, type: 'expense' }))]);
+      pushToHistory({ income: updatedList, expense, liabilityCredit, liabilityDebit });
     } else {
       setExpense(updatedList);
       saveTransactions([...income.map(i => ({ ...i, type: 'income' })), ...updatedList]);
+      pushToHistory({ income, expense: updatedList, liabilityCredit, liabilityDebit });
     }
   };
 
@@ -495,8 +628,7 @@ function Dashboard() {
     const list = type === 'credit' ? liabilityCredit : liabilityDebit;
     const updatedList = list.map(l => {
       if (l.id === id) {
-        const val = field === 'amount' ? Number(value) || 0 : value;
-        return { ...l, [field]: val };
+        return { ...l, [field]: value };
       }
       return l;
     });
@@ -504,9 +636,11 @@ function Dashboard() {
     if (type === 'credit') {
       setLiabilityCredit(updatedList);
       saveLiabilities([...updatedList, ...liabilityDebit.map(d => ({ ...d, type: 'debit' }))]);
+      pushToHistory({ income, expense, liabilityCredit: updatedList, liabilityDebit });
     } else {
       setLiabilityDebit(updatedList);
       saveLiabilities([...liabilityCredit.map(c => ({ ...c, type: 'credit' })), ...updatedList]);
+      pushToHistory({ income, expense, liabilityCredit, liabilityDebit: updatedList });
     }
   };
 
@@ -519,6 +653,7 @@ function Dashboard() {
       ...newIncome.map(i => ({ ...i, type: 'income' })),
       ...newExpense.map(e => ({ ...e, type: 'expense' }))
     ]);
+    pushToHistory({ income: newIncome, expense: newExpense, liabilityCredit, liabilityDebit });
   };
 
   const deleteLiability = async (id: string) => {
@@ -530,6 +665,7 @@ function Dashboard() {
       ...newCredit.map(c => ({ ...c, type: 'credit' })),
       ...newDebit.map(d => ({ ...d, type: 'debit' }))
     ]);
+    pushToHistory({ income, expense, liabilityCredit: newCredit, liabilityDebit: newDebit });
   };
 
   const deleteAccount = async (id: string) => {
@@ -539,25 +675,45 @@ function Dashboard() {
   };
 
   return (
-    <div className="min-h-screen bg-[#f0f2f5] text-gray-800 font-sans p-4 lg:p-6">
+    <div className="min-h-screen bg-[#f0f2f5] text-gray-800 font-sans p-2 lg:p-3">
       {/* Header */}
-      <header className="flex flex-col md:flex-row justify-between items-start md:items-center mb-8 bg-white p-4 rounded-xl shadow-sm border border-gray-100 gap-4">
-        <div className="flex items-center gap-4">
-          <h1 className="text-2xl font-bold text-[#1a365d]">Dashboard</h1>
-          <div className="h-6 w-[1px] bg-gray-300 mx-2 hidden md:block"></div>
-          <div className="flex items-center gap-2">
-            <span className="text-gray-500 font-medium">Entity ABC</span>
+      <header className="flex flex-col md:flex-row justify-between items-start md:items-center mb-4 bg-white p-2 rounded-lg shadow-sm border border-gray-100 gap-2">
+        <div className="flex items-center gap-2">
+          <h1 className="text-lg font-bold text-[#1a365d]">Dashboard</h1>
+          <div className="h-4 w-[1px] bg-gray-300 mx-1 hidden md:block"></div>
+          <div className="flex items-center gap-1">
+            <span className="text-gray-500 font-medium text-xs">Entity ABC</span>
           </div>
         </div>
 
-        <div className="flex flex-wrap items-center gap-4 w-full md:w-auto">
+        <div className="flex flex-wrap items-center gap-2 w-full md:w-auto">
+          {/* Undo/Redo Buttons */}
+          <div className="flex items-center gap-1 bg-white border border-gray-200 rounded-md p-0.5">
+            <button 
+              onClick={undo} 
+              disabled={historyIndex <= 0}
+              className={`p-1 rounded transition-colors ${historyIndex <= 0 ? 'text-gray-300 cursor-not-allowed' : 'text-gray-600 hover:bg-gray-100'}`}
+              title="Undo (Ctrl+Z)"
+            >
+              <Undo2 size={14} />
+            </button>
+            <button 
+              onClick={redo} 
+              disabled={historyIndex >= history.length - 1}
+              className={`p-1 rounded transition-colors ${historyIndex >= history.length - 1 ? 'text-gray-300 cursor-not-allowed' : 'text-gray-600 hover:bg-gray-100'}`}
+              title="Redo (Ctrl+Y)"
+            >
+              <Redo2 size={14} />
+            </button>
+          </div>
+
           {/* Duration Selector */}
-          <div className="flex items-center gap-2 bg-blue-50 px-3 py-1.5 rounded-lg border border-blue-100">
-            <span className="text-[10px] font-bold text-blue-600 uppercase">View Period:</span>
+          <div className="flex items-center gap-1.5 bg-blue-50 px-2 py-1 rounded-md border border-blue-100">
+            <span className="text-[9px] font-bold text-blue-600 uppercase">View Period:</span>
             <select 
               value={viewDuration} 
               onChange={(e) => setViewDuration(Number(e.target.value))}
-              className="bg-transparent font-bold text-[0.9em] text-blue-800 outline-none cursor-pointer"
+              className="bg-transparent font-bold text-[0.8em] text-blue-800 outline-none cursor-pointer"
             >
               <option value={1}>1 Month</option>
               <option value={3}>3 Months</option>
@@ -566,11 +722,11 @@ function Dashboard() {
             </select>
           </div>
 
-          <div className="flex items-center gap-2 bg-gray-50 px-3 py-1.5 rounded-lg border border-gray-200">
+          <div className="flex items-center gap-1.5 bg-gray-50 px-2 py-1 rounded-md border border-gray-200">
             <select 
               value={currentMonth} 
               onChange={(e) => setCurrentMonth(e.target.value)}
-              className="bg-transparent font-semibold text-[0.9em] outline-none cursor-pointer"
+              className="bg-transparent font-semibold text-[0.8em] outline-none cursor-pointer"
             >
               {["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"].map(m => (
                 <option key={m} value={m}>{m}</option>
@@ -579,7 +735,7 @@ function Dashboard() {
             <select 
               value={currentYear} 
               onChange={(e) => setCurrentYear(e.target.value)}
-              className="bg-transparent font-semibold text-[0.9em] outline-none cursor-pointer"
+              className="bg-transparent font-semibold text-[0.8em] outline-none cursor-pointer"
             >
               {["2024", "2025", "2026", "2027"].map(y => (
                 <option key={y} value={y}>{y}</option>
@@ -589,37 +745,37 @@ function Dashboard() {
           
           <button 
             onClick={() => setIsSettingsOpen(true)}
-            className="p-2 hover:bg-gray-100 rounded-full transition-colors text-gray-600"
+            className="p-1.5 hover:bg-gray-100 rounded-full transition-colors text-gray-600"
           >
-            <Settings size={22} />
+            <Settings size={18} />
           </button>
         </div>
       </header>
 
-      <main className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+      <main className="grid grid-cols-1 lg:grid-cols-12 gap-3">
         {/* Left Column: Summary and Tables */}
-        <div className="lg:col-span-9 space-y-6">
+        <div className="lg:col-span-9 space-y-3">
           
           {/* Summary Cards */}
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-3">
             <SummaryCard 
               title={`Total Income (${viewDuration}m)`} 
               value={formatCurrency(calculations.totalIncome)} 
-              icon={<Wallet className="text-blue-600" />}
+              icon={<Wallet className="text-blue-600" size={16} />}
               bgColor="bg-blue-50"
               details={viewDuration > 1 ? `Avg: ${formatCurrency(calculations.monthlyAverage)} / mo` : ""}
             />
             <SummaryCard 
               title={`Total Expense (${viewDuration}m)`} 
               value={formatCurrency(calculations.totalExpense)} 
-              icon={<Receipt className="text-orange-600" />}
+              icon={<Receipt className="text-orange-600" size={16} />}
               bgColor="bg-orange-50"
             />
             <SummaryCard 
               title="Profit/Loss Analysis" 
               value={`${formatCurrency(Math.abs(calculations.profitLoss))} / ${calculations.profitLossPercent.toFixed(2)}%`} 
               isProfit={calculations.profitLoss >= 0}
-              icon={<TrendingUp className={calculations.profitLoss >= 0 ? "text-green-600" : "text-red-600"} />}
+              icon={<TrendingUp className={calculations.profitLoss >= 0 ? "text-green-600" : "text-red-600"} size={16} />}
               bgColor={calculations.profitLoss >= 0 ? "bg-green-50" : "bg-red-50"}
               details={calculations.profitLoss >= 0 ? "Healthy Margin" : "Critical Deficit"}
             />
@@ -627,13 +783,13 @@ function Dashboard() {
               title="GST Period Summary" 
               value={formatCurrency(calculations.gstPayable)} 
               details={`In: ${formatCurrency(calculations.gstInput)} | Out: ${formatCurrency(calculations.gstOutput)}`}
-              icon={<CreditCard className="text-indigo-600" />}
+              icon={<CreditCard className="text-indigo-600" size={16} />}
               bgColor="bg-indigo-50"
             />
           </div>
 
           {/* Tables Grid */}
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
             {/* Income Table */}
             <TableSection 
               title="Income" 
@@ -689,24 +845,24 @@ function Dashboard() {
         </div>
 
         {/* Right Column: Side Panels */}
-        <div className="lg:col-span-3 space-y-6">
+        <div className="lg:col-span-3 space-y-3">
           {/* Accounts Panel */}
-          <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
-            <div className="bg-[#1a365d] text-white p-3 flex justify-between items-center">
-              <h3 className="font-semibold text-[10px]">Accounts</h3>
+          <div className="bg-white rounded-lg shadow-sm border border-gray-100 overflow-hidden">
+            <div className="bg-[#1a365d] text-white p-2 flex justify-between items-center">
+              <h3 className="font-semibold text-[9px]">Accounts</h3>
               <button onClick={addAccount} className="p-1 hover:bg-white/20 rounded transition-colors">
-                <Plus size={12} />
+                <Plus size={10} />
               </button>
             </div>
-            <div className="p-3 space-y-2">
+            <div className="p-2 space-y-1.5">
               {accounts.map(acc => (
-                <div key={acc.id} className="bg-gray-50 p-1.5 rounded border border-gray-100 text-[10px] font-medium text-gray-600 flex justify-between items-center group">
+                <div key={acc.id} className="bg-gray-50 p-1 rounded border border-gray-100 text-[9px] font-medium text-gray-600 flex justify-between items-center group">
                   {acc.name}
                   <button 
                     onClick={() => deleteAccount(acc.id)}
                     className="opacity-0 group-hover:opacity-100 text-red-400 hover:text-red-600 transition-all"
                   >
-                    <X size={10} />
+                    <X size={9} />
                   </button>
                 </div>
               ))}
@@ -714,24 +870,24 @@ function Dashboard() {
           </div>
 
           {/* Due Summary Panel */}
-          <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
-            <div className="bg-[#1a365d] text-white p-3">
-              <h3 className="font-semibold text-[10px]">Due to Summary (Cumulative)</h3>
+          <div className="bg-white rounded-lg shadow-sm border border-gray-100 overflow-hidden">
+            <div className="bg-[#1a365d] text-white p-2">
+              <h3 className="font-semibold text-[9px]">Due to Summary (Cumulative)</h3>
             </div>
-            <div className="p-3 space-y-2">
+            <div className="p-2 space-y-1.5">
               {aggregatedDueSummary.length === 0 ? (
-                <p className="text-[10px] text-gray-400 text-center py-2">No outstanding dues</p>
+                <p className="text-[9px] text-gray-400 text-center py-1">No outstanding dues</p>
               ) : (
                 <>
                   {aggregatedDueSummary.map((due, idx) => (
-                    <div key={idx} className="bg-gray-50 p-1.5 rounded border border-gray-100 text-[10px] font-medium text-gray-600 flex justify-between items-center">
-                      <span className="truncate mr-2">{due.account}:</span>
+                    <div key={idx} className="bg-gray-50 p-1 rounded border border-gray-100 text-[9px] font-medium text-gray-600 flex justify-between items-center">
+                      <span className="truncate mr-1">{due.account}:</span>
                       <span className={`font-bold ${due.amount > 0 ? 'text-[#1a365d]' : 'text-green-600'}`}>
                         {formatCurrency(due.amount)}
                       </span>
                     </div>
                   ))}
-                  <div className="pt-2 mt-2 border-t border-gray-200 flex justify-between text-[10px] font-bold text-[#1a365d]">
+                  <div className="pt-1.5 mt-1.5 border-t border-gray-200 flex justify-between text-[9px] font-bold text-[#1a365d]">
                     <span>TOTAL BALANCE:</span>
                     <span>{formatCurrency(aggregatedDueSummary.reduce((acc, curr) => acc + curr.amount, 0))}</span>
                   </div>
@@ -898,22 +1054,22 @@ function AppContent() {
 
 function SummaryCard({ title, value, icon, bgColor, percent, isProfit, details }: any) {
   return (
-    <div className="bg-white p-5 rounded-2xl shadow-sm border border-gray-100 flex items-start gap-4">
-      <div className={`${bgColor} p-3 rounded-xl`}>
+    <div className="bg-white p-1.5 rounded-lg shadow-sm border border-gray-100 flex items-center gap-2">
+      <div className={`${bgColor} p-1 rounded-md shrink-0`}>
         {icon}
       </div>
-      <div className="flex-1">
-        <p className="text-sm font-medium text-gray-500 mb-1">{title}</p>
-        <div className="flex items-center gap-2">
-          <h4 className="text-xl font-bold text-gray-800">{value}</h4>
+      <div className="flex-1 min-w-0">
+        <p className="text-[8px] font-bold text-gray-400 uppercase tracking-tight truncate leading-none mb-0.5">{title}</p>
+        <div className="flex items-baseline gap-1">
+          <h4 className="text-xs font-bold text-gray-800 whitespace-nowrap">{value}</h4>
           {percent && (
-            <span className={`text-xs font-bold px-1.5 py-0.5 rounded ${isProfit ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>
-              {isProfit ? '+' : '-'}{percent}
+            <span className={`text-[7px] font-bold px-0.5 py-0 rounded ${isProfit ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>
+              {percent}%
             </span>
           )}
         </div>
         {details && (
-          <p className="text-[10px] text-gray-400 mt-1 font-medium">{details}</p>
+          <p className="text-[7px] text-gray-400 font-medium truncate leading-none mt-0.5">{details}</p>
         )}
       </div>
     </div>
@@ -921,177 +1077,403 @@ function SummaryCard({ title, value, icon, bgColor, percent, isProfit, details }
 }
 
 function TableSection({ title, data, onAdd, onUpdate, onDelete, totals }: any) {
+  const [quickAdd, setQuickAdd] = useState({ description: '', amount: '', gst: '' });
+  const [editingRows, setEditingRows] = useState<Record<string, boolean>>({});
+
+  const isNumeric = (val: any) => {
+    if (val === "" || val === undefined || val === null) return true;
+    return !isNaN(Number(val)) && isFinite(Number(val));
+  };
+
+  const handleAdd = () => {
+    if (!quickAdd.description && !quickAdd.amount) return;
+    if (!isNumeric(quickAdd.amount) || !isNumeric(quickAdd.gst)) return;
+    onAdd(quickAdd);
+    setQuickAdd({ description: '', amount: '', gst: '' });
+  };
+
+  // Pad data to always show at least 4 rows
+  const displayData = [...data];
+  while (displayData.length < 4) {
+    displayData.push({ id: `empty-${displayData.length}`, isEmpty: true });
+  }
+
   return (
-    <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden flex flex-col">
-      <div className="bg-[#1a365d] text-white p-3 flex justify-between items-center">
-        <h3 className="font-semibold text-sm">{title}</h3>
-        <button onClick={onAdd} className="p-1 hover:bg-white/20 rounded transition-colors">
-          <Plus size={16} />
-        </button>
+    <div className="bg-white rounded-lg shadow-sm border border-gray-100 overflow-hidden flex flex-col">
+      <div className="bg-[#1a365d] text-white p-2 flex justify-between items-center">
+        <h3 className="font-semibold text-xs">{title}</h3>
       </div>
-      <div className="overflow-x-auto scrollbar-thin scrollbar-thumb-gray-200">
-        <div className="max-h-[250px] overflow-y-auto relative">
-          <table className="w-full text-left border-collapse min-w-[600px] table-fixed">
-            <thead className="sticky top-0 z-10 bg-gray-50 shadow-[0_1px_0_rgba(0,0,0,0.05)]">
-              <tr>
-                <th className="p-2 w-10"></th>
-                <th className="p-2 w-[20%] text-[10px] font-bold text-gray-500 uppercase tracking-wider whitespace-nowrap">Date</th>
-                <th className="p-2 w-[20%] text-[10px] font-bold text-gray-500 uppercase tracking-wider whitespace-nowrap">Description</th>
-                <th className="p-2 w-[20%] text-[10px] font-bold text-gray-500 uppercase tracking-wider whitespace-nowrap">Amount</th>
-                <th className="p-2 w-[20%] text-[10px] font-bold text-gray-500 uppercase tracking-wider whitespace-nowrap">GST</th>
-                <th className="p-2 w-[20%] text-[10px] font-bold text-gray-500 uppercase tracking-wider whitespace-nowrap">Total</th>
-                <th className="p-2 w-10"></th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-gray-50 bg-white">
-              {data.map((item: any) => (
-                <tr key={item.id} className="hover:bg-gray-50 group transition-colors">
-                  <td className="p-2 w-10 text-center">
-                    <button 
-                      onClick={() => document.getElementById(`desc-${item.id}`)?.focus()}
-                      className="text-blue-400 hover:text-blue-600 transition-all"
-                    >
-                      <Edit2 size={12} />
-                    </button>
+      
+      <div className="flex flex-col w-full overflow-hidden">
+        {/* Header */}
+        <table className="w-full text-left border-collapse table-fixed bg-gray-50 border-b border-gray-100">
+          <thead>
+            <tr>
+              <th className="p-1.5 w-8"></th>
+              <th className="p-1.5 w-[15%] text-[9px] font-bold text-gray-500 uppercase tracking-wider whitespace-nowrap">Date</th>
+              <th className="p-1.5 w-[25%] text-[9px] font-bold text-gray-500 uppercase tracking-wider whitespace-nowrap">Description</th>
+              <th className="p-1.5 w-[18%] text-[9px] font-bold text-gray-500 uppercase tracking-wider whitespace-nowrap">Amount</th>
+              <th className="p-1.5 w-[14%] text-[9px] font-bold text-gray-500 uppercase tracking-wider whitespace-nowrap">GST</th>
+              <th className="p-1.5 w-[18%] text-[9px] font-bold text-gray-500 uppercase tracking-wider whitespace-nowrap">Total</th>
+              <th className="p-1.5 w-8"></th>
+            </tr>
+          </thead>
+        </table>
+
+        {/* Scrollable Data Area (4 rows) */}
+        <div className="h-[112px] overflow-y-auto scrollbar-thin scrollbar-thumb-gray-200 bg-white">
+          <table className="w-full text-left border-collapse table-fixed">
+            <tbody className="divide-y divide-gray-50">
+              {displayData.map((item: any) => (
+                <tr key={item.id} className={`h-[28px] transition-colors ${item.isEmpty ? '' : 'hover:bg-gray-50 group'}`}>
+                  <td className="p-1.5 w-8 text-center">
+                    {!item.isEmpty && (
+                      <button 
+                        onClick={() => {
+                          if (editingRows[item.id]) {
+                            // Visual feedback for "saving"
+                            const btn = document.getElementById(`save-${item.id}`);
+                            if (btn) {
+                              btn.classList.add('text-green-500');
+                              setTimeout(() => btn.classList.remove('text-green-500'), 1000);
+                            }
+                            setEditingRows(prev => ({ ...prev, [item.id]: false }));
+                          } else {
+                            document.getElementById(`desc-${item.id}`)?.focus();
+                            setEditingRows(prev => ({ ...prev, [item.id]: true }));
+                          }
+                        }}
+                        id={`save-${item.id}`}
+                        className="text-blue-400 hover:text-blue-600 transition-all"
+                        title={editingRows[item.id] ? "Save Changes" : "Edit Row"}
+                      >
+                        {editingRows[item.id] ? <Save size={10} /> : <Edit2 size={10} />}
+                      </button>
+                    )}
                   </td>
-                  <td className="p-2">
-                    <input 
-                      className="w-full bg-transparent outline-none text-xs" 
-                      value={item.date} 
-                      placeholder="Date"
-                      onChange={(e) => onUpdate(item.id, 'date', e.target.value)}
-                    />
+                  <td className="p-1.5 w-[15%]">
+                    {!item.isEmpty && (
+                      <input 
+                        className="w-full bg-transparent outline-none text-[10px]" 
+                        value={item.date} 
+                        onChange={(e) => onUpdate(item.id, 'date', e.target.value)}
+                        onFocus={() => setEditingRows(prev => ({ ...prev, [item.id]: true }))}
+                      />
+                    )}
                   </td>
-                  <td className="p-2">
-                    <input 
-                      id={`desc-${item.id}`}
-                      className="w-full bg-transparent outline-none text-xs font-medium" 
-                      value={item.description} 
-                      placeholder={title === 'Income' ? "New Income" : "New Expense"}
-                      onChange={(e) => onUpdate(item.id, 'description', e.target.value)}
-                    />
+                  <td className="p-1.5 w-[25%]">
+                    {!item.isEmpty && (
+                      <input 
+                        id={`desc-${item.id}`}
+                        className="w-full bg-transparent outline-none text-[10px] font-medium" 
+                        value={item.description} 
+                        onChange={(e) => onUpdate(item.id, 'description', e.target.value)}
+                        onFocus={() => setEditingRows(prev => ({ ...prev, [item.id]: true }))}
+                      />
+                    )}
                   </td>
-                  <td className="p-2">
-                    <input 
-                      type="number"
-                      className="w-full bg-transparent outline-none text-xs font-medium" 
-                      value={item.amount === 0 ? "" : item.amount} 
-                      placeholder="0"
-                      onChange={(e) => onUpdate(item.id, 'amount', e.target.value)}
-                    />
+                  <td className="p-1.5 w-[18%]">
+                    {!item.isEmpty && (
+                      <input 
+                        type="text"
+                        className={`w-full bg-transparent outline-none text-[10px] font-medium rounded px-0.5 ${!isNumeric(item.amount) ? 'bg-red-50 border border-red-200 text-red-600' : ''}`} 
+                        value={item.amount === 0 ? "" : item.amount} 
+                        onChange={(e) => onUpdate(item.id, 'amount', e.target.value)}
+                        onFocus={() => setEditingRows(prev => ({ ...prev, [item.id]: true }))}
+                      />
+                    )}
                   </td>
-                  <td className="p-2">
-                    <input 
-                      type="number"
-                      className="w-full bg-transparent outline-none text-xs font-medium" 
-                      value={item.gst === 0 ? "" : item.gst} 
-                      placeholder="0"
-                      onChange={(e) => onUpdate(item.id, 'gst', e.target.value)}
-                    />
+                  <td className="p-1.5 w-[14%]">
+                    {!item.isEmpty && (
+                      <input 
+                        type="text"
+                        className={`w-full bg-transparent outline-none text-[10px] font-medium rounded px-0.5 ${!isNumeric(item.gst) ? 'bg-red-50 border border-red-200 text-red-600' : ''}`} 
+                        value={item.gst === 0 ? "" : item.gst} 
+                        onChange={(e) => onUpdate(item.id, 'gst', e.target.value)}
+                        onFocus={() => setEditingRows(prev => ({ ...prev, [item.id]: true }))}
+                      />
+                    )}
                   </td>
-                  <td className="p-2 text-xs font-bold text-gray-700">₹{item.total}</td>
-                  <td className="p-2 w-10 text-center">
-                    <button onClick={() => onDelete(item.id)} className="text-red-400 hover:text-red-600 transition-all">
-                      <Trash2 size={12} />
-                    </button>
+                  <td className="p-1.5 w-[18%] text-[10px] font-bold text-gray-700">
+                    {!item.isEmpty && `₹${item.total}`}
+                  </td>
+                  <td className="p-1.5 w-8 text-center">
+                    {!item.isEmpty && (
+                      <button onClick={() => onDelete(item.id)} className="text-red-400 hover:text-red-600 transition-all">
+                        <Trash2 size={10} />
+                      </button>
+                    )}
                   </td>
                 </tr>
               ))}
             </tbody>
-            <tfoot className="sticky bottom-0 z-10 bg-gray-50 shadow-[0_-1px_0_rgba(0,0,0,0.05)]">
-              <tr className="font-bold">
-                <td className="w-10"></td>
-                <td colSpan={2} className="p-2 text-right text-[10px] text-gray-400">TOTAL</td>
-                <td className="p-2 text-xs">₹{totals.amount}</td>
-                <td className="p-2 text-xs">₹{totals.gst}</td>
-                <td className="p-2 text-xs text-[#1a365d]">₹{totals.total}</td>
-                <td className="w-10"></td>
-              </tr>
-            </tfoot>
           </table>
         </div>
+
+        {/* 5th Row: Input Row */}
+        <table className="w-full text-left border-collapse table-fixed border-t border-gray-100 bg-blue-50/30">
+          <tbody>
+            <tr className="h-[32px]">
+              <td className="p-1.5 w-8 text-center">
+                <Plus size={10} className="text-blue-400 mx-auto" />
+              </td>
+              <td className="p-1.5 w-[15%]">
+                <div className="w-full bg-white/50 border border-blue-100 rounded px-1.5 py-0.5 text-[9px] text-gray-400 italic">
+                  Auto Date
+                </div>
+              </td>
+              <td className="p-1.5 w-[25%]">
+                <input 
+                  className="w-full bg-white border border-blue-200 rounded px-1.5 py-0.5 text-[10px] outline-none focus:border-blue-400 focus:ring-1 focus:ring-blue-100 transition-all placeholder:text-gray-300" 
+                  placeholder="Add description..."
+                  value={quickAdd.description}
+                  onChange={(e) => setQuickAdd({...quickAdd, description: e.target.value})}
+                  onKeyDown={(e) => e.key === 'Enter' && handleAdd()}
+                />
+              </td>
+              <td className="p-1.5 w-[18%]">
+                <input 
+                  type="text"
+                  className={`w-full bg-white border rounded px-1.5 py-0.5 text-[10px] outline-none transition-all placeholder:text-gray-300 ${!isNumeric(quickAdd.amount) ? 'border-red-300 bg-red-50 text-red-600' : 'border-blue-200 focus:border-blue-400 focus:ring-1 focus:ring-blue-100'}`} 
+                  placeholder="0"
+                  value={quickAdd.amount}
+                  onChange={(e) => setQuickAdd({...quickAdd, amount: e.target.value})}
+                  onKeyDown={(e) => e.key === 'Enter' && handleAdd()}
+                />
+              </td>
+              <td className="p-1.5 w-[14%]">
+                <input 
+                  type="text"
+                  className={`w-full bg-white border rounded px-1.5 py-0.5 text-[10px] outline-none transition-all placeholder:text-gray-300 ${!isNumeric(quickAdd.gst) ? 'border-red-300 bg-red-50 text-red-600' : 'border-blue-200 focus:border-blue-400 focus:ring-1 focus:ring-blue-100'}`} 
+                  placeholder="0"
+                  value={quickAdd.gst}
+                  onChange={(e) => setQuickAdd({...quickAdd, gst: e.target.value})}
+                  onKeyDown={(e) => e.key === 'Enter' && handleAdd()}
+                />
+              </td>
+              <td className="p-1.5 w-[18%]">
+                <button 
+                  onClick={handleAdd}
+                  className="w-full text-[9px] font-bold text-blue-600 hover:text-blue-800 bg-blue-100/50 hover:bg-blue-100 border border-blue-200 rounded py-0.5 transition-colors"
+                >
+                  ADD
+                </button>
+              </td>
+              <td className="p-1.5 w-8"></td>
+            </tr>
+          </tbody>
+        </table>
+
+        {/* 6th Row: Total Row */}
+        <table className="w-full text-left border-collapse table-fixed bg-gray-50 border-t border-gray-200">
+          <tfoot>
+            <tr className="h-[28px] font-bold">
+              <td className="w-8"></td>
+              <td colSpan={2} className="p-1.5 text-right text-[9px] text-gray-400">TOTAL</td>
+              <td className="p-1.5 w-[18%] text-[10px]">₹{totals.amount}</td>
+              <td className="p-1.5 w-[14%] text-[10px]">₹{totals.gst}</td>
+              <td className="p-1.5 w-[18%] text-[10px] text-[#1a365d]">₹{totals.total}</td>
+              <td className="w-8"></td>
+            </tr>
+          </tfoot>
+        </table>
       </div>
     </div>
   );
 }
 
 function LiabilityTable({ title, data, onAdd, onUpdate, onDelete }: any) {
+  const [quickAdd, setQuickAdd] = useState({ account: '', description: '', amount: '' });
+  const [editingRows, setEditingRows] = useState<Record<string, boolean>>({});
+
+  const isNumeric = (val: any) => {
+    if (val === "" || val === undefined || val === null) return true;
+    return !isNaN(Number(val)) && isFinite(Number(val));
+  };
+
+  const handleAdd = () => {
+    if (!quickAdd.account && !quickAdd.amount) return;
+    if (!isNumeric(quickAdd.amount)) return;
+    onAdd(quickAdd);
+    setQuickAdd({ account: '', description: '', amount: '' });
+  };
+
+  const displayData = [...data];
+  while (displayData.length < 4) {
+    displayData.push({ id: `empty-${displayData.length}`, isEmpty: true });
+  }
+
   return (
-    <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden flex flex-col">
-      <div className="bg-[#1a365d] text-white p-3 flex justify-between items-center">
-        <h3 className="font-semibold text-sm">{title}</h3>
-        <button onClick={onAdd} className="p-1 hover:bg-white/20 rounded transition-colors">
-          <Plus size={16} />
-        </button>
+    <div className="bg-white rounded-lg shadow-sm border border-gray-100 overflow-hidden flex flex-col">
+      <div className="bg-[#1a365d] text-white p-2 flex justify-between items-center">
+        <h3 className="font-semibold text-xs">{title}</h3>
       </div>
-      <div className="overflow-x-auto scrollbar-thin scrollbar-thumb-gray-200">
-        <div className="max-h-[250px] overflow-y-auto relative">
-          <table className="w-full text-left border-collapse min-w-[600px] table-fixed">
-            <thead className="sticky top-0 z-10 bg-gray-50 shadow-[0_1px_0_rgba(0,0,0,0.05)]">
-              <tr>
-                <th className="p-2 w-10"></th>
-                <th className="p-2 w-[25%] text-[10px] font-bold text-gray-500 uppercase tracking-wider whitespace-nowrap">Date</th>
-                <th className="p-2 w-[25%] text-[10px] font-bold text-gray-500 uppercase tracking-wider whitespace-nowrap">Account</th>
-                <th className="p-2 w-[25%] text-[10px] font-bold text-gray-500 uppercase tracking-wider whitespace-nowrap">Description</th>
-                <th className="p-2 w-[25%] text-[10px] font-bold text-gray-500 uppercase tracking-wider whitespace-nowrap">Amount</th>
-                <th className="p-2 w-10"></th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-gray-50 bg-white">
-              {data.map((item: any) => (
-                <tr key={item.id} className="hover:bg-gray-50 group transition-colors">
-                  <td className="p-2 w-10 text-center">
-                    <button 
-                      onClick={() => document.getElementById(`liab-${item.id}`)?.focus()}
-                      className="text-blue-400 hover:text-blue-600 transition-all"
-                    >
-                      <Edit2 size={12} />
-                    </button>
+
+      <div className="flex flex-col w-full overflow-hidden">
+        {/* Header */}
+        <table className="w-full text-left border-collapse table-fixed bg-gray-50 border-b border-gray-100">
+          <thead>
+            <tr>
+              <th className="p-1.5 w-8"></th>
+              <th className="p-1.5 w-[20%] text-[9px] font-bold text-gray-500 uppercase tracking-wider whitespace-nowrap">Date</th>
+              <th className="p-1.5 w-[22%] text-[9px] font-bold text-gray-500 uppercase tracking-wider whitespace-nowrap">Account</th>
+              <th className="p-1.5 w-[25%] text-[9px] font-bold text-gray-500 uppercase tracking-wider whitespace-nowrap">Description</th>
+              <th className="p-1.5 w-[18%] text-[9px] font-bold text-gray-500 uppercase tracking-wider whitespace-nowrap">Amount</th>
+              <th className="p-1.5 w-8"></th>
+            </tr>
+          </thead>
+        </table>
+
+        {/* Scrollable Data Area (4 rows) */}
+        <div className="h-[112px] overflow-y-auto scrollbar-thin scrollbar-thumb-gray-200 bg-white">
+          <table className="w-full text-left border-collapse table-fixed">
+            <tbody className="divide-y divide-gray-50">
+              {displayData.map((item: any) => (
+                <tr key={item.id} className={`h-[28px] transition-colors ${item.isEmpty ? '' : 'hover:bg-gray-50 group'}`}>
+                  <td className="p-1.5 w-8 text-center">
+                    {!item.isEmpty && (
+                      <button 
+                        onClick={() => {
+                          if (editingRows[item.id]) {
+                            const btn = document.getElementById(`save-liab-${item.id}`);
+                            if (btn) {
+                              btn.classList.add('text-green-500');
+                              setTimeout(() => btn.classList.remove('text-green-500'), 1000);
+                            }
+                            setEditingRows(prev => ({ ...prev, [item.id]: false }));
+                          } else {
+                            document.getElementById(`liab-${item.id}`)?.focus();
+                            setEditingRows(prev => ({ ...prev, [item.id]: true }));
+                          }
+                        }}
+                        id={`save-liab-${item.id}`}
+                        className="text-blue-400 hover:text-blue-600 transition-all"
+                        title={editingRows[item.id] ? "Save Changes" : "Edit Row"}
+                      >
+                        {editingRows[item.id] ? <Save size={10} /> : <Edit2 size={10} />}
+                      </button>
+                    )}
                   </td>
-                  <td className="p-2">
-                    <input 
-                      className="w-full bg-transparent outline-none text-xs" 
-                      value={item.date} 
-                      placeholder="Date"
-                      onChange={(e) => onUpdate(item.id, 'date', e.target.value)} 
-                    />
+                  <td className="p-1.5 w-[20%]">
+                    {!item.isEmpty && (
+                      <input 
+                        className="w-full bg-transparent outline-none text-[10px]" 
+                        value={item.date} 
+                        onChange={(e) => onUpdate(item.id, 'date', e.target.value)} 
+                        onFocus={() => setEditingRows(prev => ({ ...prev, [item.id]: true }))}
+                      />
+                    )}
                   </td>
-                  <td className="p-2">
-                    <input 
-                      id={`liab-${item.id}`}
-                      className="w-full bg-transparent outline-none text-xs font-medium" 
-                      value={item.account} 
-                      placeholder="Account"
-                      onChange={(e) => onUpdate(item.id, 'account', e.target.value)} 
-                    />
+                  <td className="p-1.5 w-[22%]">
+                    {!item.isEmpty && (
+                      <input 
+                        id={`liab-${item.id}`}
+                        className="w-full bg-transparent outline-none text-[10px] font-medium" 
+                        value={item.account} 
+                        onChange={(e) => onUpdate(item.id, 'account', e.target.value)} 
+                        onFocus={() => setEditingRows(prev => ({ ...prev, [item.id]: true }))}
+                      />
+                    )}
                   </td>
-                  <td className="p-2">
-                    <input 
-                      className="w-full bg-transparent outline-none text-xs" 
-                      value={item.description} 
-                      placeholder="Description"
-                      onChange={(e) => onUpdate(item.id, 'description', e.target.value)} 
-                    />
+                  <td className="p-1.5 w-[25%]">
+                    {!item.isEmpty && (
+                      <input 
+                        className="w-full bg-transparent outline-none text-[10px]" 
+                        value={item.description} 
+                        onChange={(e) => onUpdate(item.id, 'description', e.target.value)} 
+                        onFocus={() => setEditingRows(prev => ({ ...prev, [item.id]: true }))}
+                      />
+                    )}
                   </td>
-                  <td className="p-2">
-                    <input 
-                      type="number" 
-                      className="w-full bg-transparent outline-none text-xs font-medium" 
-                      value={item.amount === 0 ? "" : item.amount} 
-                      placeholder="0"
-                      onChange={(e) => onUpdate(item.id, 'amount', e.target.value)} 
-                    />
+                  <td className="p-1.5 w-[18%]">
+                    {!item.isEmpty && (
+                      <input 
+                        type="text" 
+                        className={`w-full bg-transparent outline-none text-[10px] font-medium rounded px-0.5 ${!isNumeric(item.amount) ? 'bg-red-50 border border-red-200 text-red-600' : ''}`} 
+                        value={item.amount === 0 ? "" : item.amount} 
+                        onChange={(e) => onUpdate(item.id, 'amount', e.target.value)} 
+                        onFocus={() => setEditingRows(prev => ({ ...prev, [item.id]: true }))}
+                      />
+                    )}
                   </td>
-                  <td className="p-2 w-10 text-center">
-                    <button onClick={() => onDelete(item.id)} className="text-red-400 hover:text-red-600 transition-all">
-                      <Trash2 size={12} />
-                    </button>
+                  <td className="p-1.5 w-8 text-center">
+                    {!item.isEmpty && (
+                      <button onClick={() => onDelete(item.id)} className="text-red-400 hover:text-red-600 transition-all">
+                        <Trash2 size={10} />
+                      </button>
+                    )}
                   </td>
                 </tr>
               ))}
             </tbody>
           </table>
         </div>
+
+        {/* 5th Row: Input Row */}
+        <table className="w-full text-left border-collapse table-fixed border-t border-gray-100 bg-blue-50/30">
+          <tbody>
+            <tr className="h-[32px]">
+              <td className="p-1.5 w-8 text-center">
+                <Plus size={10} className="text-blue-400 mx-auto" />
+              </td>
+              <td className="p-1.5 w-[20%]">
+                <div className="w-full bg-white/50 border border-blue-100 rounded px-1.5 py-0.5 text-[9px] text-gray-400 italic">
+                  Auto Date
+                </div>
+              </td>
+              <td className="p-1.5 w-[22%]">
+                <input 
+                  className="w-full bg-white border border-blue-200 rounded px-1.5 py-0.5 text-[10px] outline-none focus:border-blue-400 focus:ring-1 focus:ring-blue-100 transition-all placeholder:text-gray-300" 
+                  placeholder="Account..."
+                  value={quickAdd.account}
+                  onChange={(e) => setQuickAdd({...quickAdd, account: e.target.value})}
+                  onKeyDown={(e) => e.key === 'Enter' && handleAdd()}
+                />
+              </td>
+              <td className="p-1.5 w-[25%]">
+                <input 
+                  className="w-full bg-white border border-blue-200 rounded px-1.5 py-0.5 text-[10px] outline-none focus:border-blue-400 focus:ring-1 focus:ring-blue-100 transition-all placeholder:text-gray-300" 
+                  placeholder="Description..."
+                  value={quickAdd.description}
+                  onChange={(e) => setQuickAdd({...quickAdd, description: e.target.value})}
+                  onKeyDown={(e) => e.key === 'Enter' && handleAdd()}
+                />
+              </td>
+              <td className="p-1.5 w-[18%]">
+                <input 
+                  type="text"
+                  className={`w-full bg-white border rounded px-1.5 py-0.5 text-[10px] outline-none transition-all placeholder:text-gray-300 ${!isNumeric(quickAdd.amount) ? 'border-red-300 bg-red-50 text-red-600' : 'border-blue-200 focus:border-blue-400 focus:ring-1 focus:ring-blue-100'}`} 
+                  placeholder="0"
+                  value={quickAdd.amount}
+                  onChange={(e) => setQuickAdd({...quickAdd, amount: e.target.value})}
+                  onKeyDown={(e) => e.key === 'Enter' && handleAdd()}
+                />
+              </td>
+              <td className="p-1.5 w-8 text-center">
+                <button 
+                  onClick={handleAdd}
+                  className="w-full text-[9px] font-bold text-blue-600 hover:text-blue-800 bg-blue-100/50 hover:bg-blue-100 border border-blue-200 rounded py-0.5 transition-colors"
+                >
+                  ADD
+                </button>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+
+        {/* 6th Row: Total Row (Placeholder for consistency) */}
+        <table className="w-full text-left border-collapse table-fixed bg-gray-50 border-t border-gray-200">
+          <tfoot>
+            <tr className="h-[28px] font-bold">
+              <td className="w-8"></td>
+              <td colSpan={3} className="p-1.5 text-right text-[9px] text-gray-400 uppercase">Monthly Total</td>
+              <td className="p-1.5 w-[18%] text-[10px] text-[#1a365d]">
+                ₹{data.reduce((acc: number, curr: any) => acc + (Number(curr.amount) || 0), 0)}
+              </td>
+              <td className="w-8"></td>
+            </tr>
+          </tfoot>
+        </table>
       </div>
     </div>
   );
