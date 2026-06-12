@@ -1,0 +1,436 @@
+{
+	"info": {
+		"_postman_id": "4b6f1fb8-226e-4f36-9b57-d2e858db142d",
+		"name": "Fintech Expense Dashboard API",
+		"description": "API collection for managing users, transactions, liabilities, and accounts linked to a MySQL database.",
+		"schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+	},
+	"item": [
+		{
+			"name": "Auth",
+			"item": [
+				{
+					"name": "Login / Auto-Signup",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"const responseJson = pm.response.json();",
+									"if (responseJson.token) {",
+									"    pm.collectionVariables.set(\"token\", responseJson.token);",
+									"}"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"email\": \"demo@example.com\",\n    \"password\": \"Numasoft@#2!\"\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": {
+							"raw": "{{baseUrl}}/api/auth/login",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"api",
+								"auth",
+								"login"
+							]
+						},
+						"description": "Log in with email and password. Generates a new user and default settings if they do not exist. Automatically sets the collection token variable on success."
+					},
+					"response": []
+				}
+			]
+		},
+		{
+			"name": "Transactions",
+			"item": [
+				{
+					"name": "Get Transactions",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/api/transactions",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"api",
+								"transactions"
+							]
+						},
+						"description": "Fetch all transactions for the authenticated user."
+					},
+					"response": []
+				},
+				{
+					"name": "Create Transaction",
+					"request": {
+						"method": "POST",
+						"header": [],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"date\": \"2nd April\",\n    \"description\": \"Consulting Services\",\n    \"amount\": 5000,\n    \"gst\": 900,\n    \"total\": 5900,\n    \"type\": \"income\",\n    \"entity_id\": \"Entity ABC\"\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": {
+							"raw": "{{baseUrl}}/api/transactions",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"api",
+								"transactions"
+							]
+						},
+						"description": "Create a new transaction (income/expense) for the user."
+					},
+					"response": []
+				},
+				{
+					"name": "Update Transaction",
+					"request": {
+						"method": "PUT",
+						"header": [],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"date\": \"2nd April\",\n    \"description\": \"Consulting Services - Revised\",\n    \"amount\": 5500,\n    \"gst\": 990,\n    \"total\": 6490,\n    \"type\": \"income\"\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": {
+							"raw": "{{baseUrl}}/api/transactions/1",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"api",
+								"transactions",
+								"1"
+							]
+						},
+						"description": "Update an existing transaction. Replace '1' with the transaction ID."
+					},
+					"response": []
+				},
+				{
+					"name": "Delete Transaction",
+					"request": {
+						"method": "DELETE",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/api/transactions/1",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"api",
+								"transactions",
+								"1"
+							]
+						},
+						"description": "Delete a transaction by ID. Replace '1' with target ID."
+					},
+					"response": []
+				}
+			]
+		},
+		{
+			"name": "Liabilities",
+			"item": [
+				{
+					"name": "Get Liabilities",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/api/liabilities",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"api",
+								"liabilities"
+							]
+						},
+						"description": "Fetch all liabilities for the authenticated user."
+					},
+					"response": []
+				},
+				{
+					"name": "Create Liability",
+					"request": {
+						"method": "POST",
+						"header": [],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"date\": \"2nd April\",\n    \"account\": \"HDFC\",\n    \"description\": \"Office Rent Payment\",\n    \"amount\": 1500,\n    \"type\": \"credit\"\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": {
+							"raw": "{{baseUrl}}/api/liabilities",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"api",
+								"liabilities"
+							]
+						},
+						"description": "Create a new liability record (credit/debit) for the user."
+					},
+					"response": []
+				},
+				{
+					"name": "Update Liability",
+					"request": {
+						"method": "PUT",
+						"header": [],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"date\": \"2nd April\",\n    \"account\": \"HDFC\",\n    \"description\": \"Office Rent Payment - Final\",\n    \"amount\": 1500,\n    \"type\": \"credit\"\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": {
+							"raw": "{{baseUrl}}/api/liabilities/1",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"api",
+								"liabilities",
+								"1"
+							]
+						},
+						"description": "Update an existing liability. Replace '1' with target ID."
+					},
+					"response": []
+				},
+				{
+					"name": "Delete Liability",
+					"request": {
+						"method": "DELETE",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/api/liabilities/1",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"api",
+								"liabilities",
+								"1"
+							]
+						},
+						"description": "Delete a liability by ID. Replace '1' with target ID."
+					},
+					"response": []
+				}
+			]
+		},
+		{
+			"name": "Accounts",
+			"item": [
+				{
+					"name": "Get Accounts",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/api/accounts",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"api",
+								"accounts"
+							]
+						},
+						"description": "Fetch all accounts configured for the user."
+					},
+					"response": []
+				},
+				{
+					"name": "Create Account",
+					"request": {
+						"method": "POST",
+						"header": [],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"name\": \"ICICI Bank\"\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": {
+							"raw": "{{baseUrl}}/api/accounts",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"api",
+								"accounts"
+							]
+						},
+						"description": "Configure a new account name."
+					},
+					"response": []
+				},
+				{
+					"name": "Delete Account",
+					"request": {
+						"method": "DELETE",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/api/accounts/1",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"api",
+								"accounts",
+								"1"
+							]
+						},
+						"description": "Delete a bank account configuration. Replace '1' with target ID."
+					},
+					"response": []
+				}
+			]
+		},
+		{
+			"name": "Sync Operations",
+			"item": [
+				{
+					"name": "Batch Sync (If DB Empty)",
+					"request": {
+						"method": "POST",
+						"header": [],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"transactions\": [\n        {\n            \"date\": \"2nd April\",\n            \"description\": \"Entity 401\",\n            \"amount\": 1000,\n            \"gst\": 180,\n            \"total\": 1180,\n            \"type\": \"income\"\n        }\n    ],\n    \"liabilities\": [\n        {\n            \"date\": \"2nd April\",\n            \"account\": \"HDFC\",\n            \"description\": \"Rent\",\n            \"amount\": 1000,\n            \"type\": \"credit\"\n        }\n    ],\n    \"accounts\": [\n        {\n            \"name\": \"Entity 401\"\n        }\n    ]\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": {
+							"raw": "{{baseUrl}}/api/sync",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"api",
+								"sync"
+							]
+						},
+						"description": "Sync local client data to database. Performs insertions only if user tables are empty."
+					},
+					"response": []
+				},
+				{
+					"name": "Atomically Overwrite Data (Undo/Redo)",
+					"request": {
+						"method": "POST",
+						"header": [],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"transactions\": [\n        {\n            \"date\": \"2nd April\",\n            \"description\": \"Entity 401\",\n            \"amount\": 1000,\n            \"gst\": 180,\n            \"total\": 1180,\n            \"type\": \"income\"\n        }\n    ],\n    \"liabilities\": []\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": {
+							"raw": "{{baseUrl}}/api/sync/overwrite",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"api",
+								"sync",
+								"overwrite"
+							]
+						},
+						"description": "Atomically overwrites all transactions and liabilities with target list values. Used for maintaining undo/redo consistency."
+					},
+					"response": []
+				}
+			]
+		}
+	],
+	"auth": {
+		"type": "bearer",
+		"bearer": [
+			{
+				"key": "token",
+				"value": "{{token}}",
+				"type": "string"
+			}
+		]
+	},
+	"event": [
+		{
+			"listen": "prerequest",
+			"script": {
+				"type": "text/javascript",
+				"exec": [
+					""
+				]
+			}
+		},
+		{
+			"listen": "test",
+			"script": {
+				"type": "text/javascript",
+				"exec": [
+					""
+				]
+			}
+		}
+	],
+	"variable": [
+		{
+			"key": "baseUrl",
+			"value": "http://localhost:5001",
+			"type": "string"
+		},
+		{
+			"key": "token",
+			"value": "",
+			"type": "string"
+		}
+	]
+}
