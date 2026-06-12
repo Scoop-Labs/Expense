@@ -4,7 +4,7 @@
  */
 
 import * as React from "react";
-import { useState, useMemo, useEffect, createContext, useContext, Component, useCallback } from "react";
+import { useState, useMemo, useEffect, createContext, useContext, Component, useCallback, useRef } from "react";
 import { 
   Settings, 
   Plus, 
@@ -26,6 +26,22 @@ import {
   Redo2
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
+
+// --- API Fetch Helper ---
+const apiFetch = async (url: string, options: any = {}) => {
+  const token = localStorage.getItem('fintech_token');
+  const headers = {
+    'Content-Type': 'application/json',
+    ...(token ? { 'Authorization': `Bearer ${token}` } : {}),
+    ...options.headers,
+  };
+  const response = await fetch(url, { ...options, headers });
+  if (!response.ok) {
+    const errorData = await response.json().catch(() => ({}));
+    throw new Error(errorData.error || `HTTP error! status: ${response.status}`);
+  }
+  return response.json();
+};
 
 // --- Types ---
 
@@ -81,7 +97,7 @@ interface DueSummary {
 interface AuthContextType {
   user: User | null;
   loading: boolean;
-  login: () => Promise<void>;
+  login: (email?: string, password?: string) => Promise<void>;
   logout: () => Promise<void>;
   authError: string | null;
   setAuthError: (error: string | null) => void;
@@ -97,16 +113,68 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [loading, setLoading] = useState(false);
   const [authError, setAuthError] = useState<string | null>(null);
 
-  const login = async () => {
+  const login = async (email?: string, password?: string) => {
     setAuthError(null);
-    const mockUser = { uid: 'local-user', email: 'demo@example.com' };
-    setUser(mockUser);
-    localStorage.setItem('fintech_user', JSON.stringify(mockUser));
+    setLoading(true);
+    try {
+      const response = await fetch('/api/auth/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          email: email || 'demo@example.com',
+          password: password || 'Numasoft@#2!'
+        })
+      });
+
+      if (!response.ok) {
+        const err = await response.json();
+        throw new Error(err.error || 'Login failed');
+      }
+
+      const data = await response.json();
+      localStorage.setItem('fintech_token', data.token);
+      localStorage.setItem('fintech_user', JSON.stringify(data.user));
+      
+      // Sync local storage data if exists
+      const localTx = localStorage.getItem(`transactions_local-user`);
+      const localLiab = localStorage.getItem(`liabilities_local-user`);
+      const localAcc = localStorage.getItem(`accounts_local-user`);
+
+      if (localTx || localLiab || localAcc) {
+        try {
+          await fetch('/api/sync', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': `Bearer ${data.token}`
+            },
+            body: JSON.stringify({
+              transactions: localTx ? JSON.parse(localTx) : [],
+              liabilities: localLiab ? JSON.parse(localLiab) : [],
+              accounts: localAcc ? JSON.parse(localAcc) : []
+            })
+          });
+          // Clean up local storage keys so we don't sync again
+          localStorage.removeItem(`transactions_local-user`);
+          localStorage.removeItem(`liabilities_local-user`);
+          localStorage.removeItem(`accounts_local-user`);
+        } catch (syncErr) {
+          console.error("Failed to sync local data:", syncErr);
+        }
+      }
+
+      setUser(data.user);
+    } catch (err: any) {
+      setAuthError(err.message);
+    } finally {
+      setLoading(false);
+    }
   };
 
   const logout = async () => {
     setUser(null);
     localStorage.removeItem('fintech_user');
+    localStorage.removeItem('fintech_token');
   };
 
   return (
@@ -253,7 +321,7 @@ function Dashboard() {
     });
   };
 
-  const undo = useCallback(() => {
+  const undo = useCallback(async () => {
     if (historyIndex > 0) {
       const prevState = history[historyIndex - 1];
       setIncome(prevState.income);
@@ -262,13 +330,21 @@ function Dashboard() {
       setLiabilityDebit(prevState.liabilityDebit);
       setHistoryIndex(historyIndex - 1);
       
-      // Save to localStorage
-      saveTransactions([...prevState.income.map(i => ({ ...i, type: 'income' })), ...prevState.expense.map(e => ({ ...e, type: 'expense' }))]);
-      saveLiabilities([...prevState.liabilityCredit.map(c => ({ ...c, type: 'credit' })), ...prevState.liabilityDebit.map(d => ({ ...d, type: 'debit' }))]);
+      try {
+        await apiFetch('/api/sync/overwrite', {
+          method: 'POST',
+          body: JSON.stringify({
+            transactions: [...prevState.income.map(i => ({ ...i, type: 'income' })), ...prevState.expense.map(e => ({ ...e, type: 'expense' }))],
+            liabilities: [...prevState.liabilityCredit.map(c => ({ ...c, type: 'credit' })), ...prevState.liabilityDebit.map(d => ({ ...d, type: 'debit' }))]
+          })
+        });
+      } catch (err) {
+        console.error("Undo DB sync failed:", err);
+      }
     }
   }, [historyIndex, history, user]);
 
-  const redo = useCallback(() => {
+  const redo = useCallback(async () => {
     if (historyIndex < history.length - 1) {
       const nextState = history[historyIndex + 1];
       setIncome(nextState.income);
@@ -277,77 +353,96 @@ function Dashboard() {
       setLiabilityDebit(nextState.liabilityDebit);
       setHistoryIndex(historyIndex + 1);
 
-      // Save to localStorage
-      saveTransactions([...nextState.income.map(i => ({ ...i, type: 'income' })), ...nextState.expense.map(e => ({ ...e, type: 'expense' }))]);
-      saveLiabilities([...nextState.liabilityCredit.map(c => ({ ...c, type: 'credit' })), ...nextState.liabilityDebit.map(d => ({ ...d, type: 'debit' }))]);
+      try {
+        await apiFetch('/api/sync/overwrite', {
+          method: 'POST',
+          body: JSON.stringify({
+            transactions: [...nextState.income.map(i => ({ ...i, type: 'income' })), ...nextState.expense.map(e => ({ ...e, type: 'expense' }))],
+            liabilities: [...nextState.liabilityCredit.map(c => ({ ...c, type: 'credit' })), ...nextState.liabilityDebit.map(d => ({ ...d, type: 'debit' }))]
+          })
+        });
+      } catch (err) {
+        console.error("Redo DB sync failed:", err);
+      }
     }
   }, [historyIndex, history, user]);
 
-  // --- Local Storage Sync ---
+  // --- Database Initial Load ---
   useEffect(() => {
     if (!user) return;
 
-    const savedTransactions = localStorage.getItem(`transactions_${user.uid}`);
-    const savedLiabilities = localStorage.getItem(`liabilities_${user.uid}`);
-    const savedAccounts = localStorage.getItem(`accounts_${user.uid}`);
+    const loadData = async () => {
+      try {
+        const [dbTransactions, dbLiabilities, dbAccounts] = await Promise.all([
+          apiFetch('/api/transactions'),
+          apiFetch('/api/liabilities'),
+          apiFetch('/api/accounts')
+        ]);
 
-    let initialIncome = [];
-    let initialExpense = [];
-    if (savedTransactions) {
-      const all = JSON.parse(savedTransactions) as (Transaction & { type: string })[];
-      const formatted = all.map(t => ({ ...t, date: formatIfISO(t.date) }));
-      const inc = formatted.filter(t => t.type === 'income');
-      const exp = formatted.filter(t => t.type === 'expense');
-      setIncome(inc);
-      setExpense(exp);
-      initialIncome = inc;
-      initialExpense = exp;
-    } else {
-      // Load initial data if empty
-      const initial = [
-        ...INITIAL_INCOME.map(t => ({ ...t, type: 'income', userId: user.uid })),
-        ...INITIAL_EXPENSE.map(t => ({ ...t, type: 'expense', userId: user.uid }))
-      ];
-      localStorage.setItem(`transactions_${user.uid}`, JSON.stringify(initial));
-      setIncome(INITIAL_INCOME);
-      setExpense(INITIAL_EXPENSE);
-      initialIncome = INITIAL_INCOME;
-      initialExpense = INITIAL_EXPENSE;
-    }
+        if (dbTransactions.length === 0 && dbLiabilities.length === 0 && dbAccounts.length === 0) {
+          const initials = {
+            transactions: [
+              ...INITIAL_INCOME.map(t => ({ ...t, type: 'income' })),
+              ...INITIAL_EXPENSE.map(t => ({ ...t, type: 'expense' }))
+            ],
+            liabilities: [
+              ...INITIAL_LIABILITY_CREDIT.map(l => ({ ...l, type: 'credit' })),
+              ...INITIAL_LIABILITY_DEBIT.map(l => ({ ...l, type: 'debit' }))
+            ],
+            accounts: INITIAL_ACCOUNTS
+          };
+          
+          await apiFetch('/api/sync', {
+            method: 'POST',
+            body: JSON.stringify(initials)
+          });
+          
+          // Re-load
+          const [newTx, newLiab, newAcc] = await Promise.all([
+            apiFetch('/api/transactions'),
+            apiFetch('/api/liabilities'),
+            apiFetch('/api/accounts')
+          ]);
+          
+          const formattedTx = newTx.map((t: any) => ({ ...t, date: formatIfISO(t.date) }));
+          const inc = formattedTx.filter((t: any) => t.type === 'income');
+          const exp = formattedTx.filter((t: any) => t.type === 'expense');
+          setIncome(inc);
+          setExpense(exp);
 
-    let initialCredit = [];
-    let initialDebit = [];
-    if (savedLiabilities) {
-      const all = JSON.parse(savedLiabilities) as (Liability & { type: string })[];
-      const formatted = all.map(l => ({ ...l, date: formatIfISO(l.date) }));
-      const cr = formatted.filter(l => l.type === 'credit');
-      const db = formatted.filter(l => l.type === 'debit');
-      setLiabilityCredit(cr);
-      setLiabilityDebit(db);
-      initialCredit = cr;
-      initialDebit = db;
-    } else {
-      const initial = [
-        ...INITIAL_LIABILITY_CREDIT.map(l => ({ ...l, type: 'credit', userId: user.uid })),
-        ...INITIAL_LIABILITY_DEBIT.map(l => ({ ...l, type: 'debit', userId: user.uid }))
-      ];
-      localStorage.setItem(`liabilities_${user.uid}`, JSON.stringify(initial));
-      setLiabilityCredit(INITIAL_LIABILITY_CREDIT);
-      setLiabilityDebit(INITIAL_LIABILITY_DEBIT);
-      initialCredit = INITIAL_LIABILITY_CREDIT;
-      initialDebit = INITIAL_LIABILITY_DEBIT;
-    }
+          const formattedLiab = newLiab.map((l: any) => ({ ...l, date: formatIfISO(l.date) }));
+          const cr = formattedLiab.filter((l: any) => l.type === 'credit');
+          const db = formattedLiab.filter((l: any) => l.type === 'debit');
+          setLiabilityCredit(cr);
+          setLiabilityDebit(db);
 
-    // Initialize history
-    setHistory([{ income: initialIncome, expense: initialExpense, liabilityCredit: initialCredit, liabilityDebit: initialDebit }]);
-    setHistoryIndex(0);
+          setAccounts(newAcc);
+          setHistory([{ income: inc, expense: exp, liabilityCredit: cr, liabilityDebit: db }]);
+          setHistoryIndex(0);
+          return;
+        }
 
-    if (savedAccounts) {
-      setAccounts(JSON.parse(savedAccounts));
-    } else {
-      localStorage.setItem(`accounts_${user.uid}`, JSON.stringify(INITIAL_ACCOUNTS));
-      setAccounts(INITIAL_ACCOUNTS);
-    }
+        const formattedTx = dbTransactions.map((t: any) => ({ ...t, date: formatIfISO(t.date) }));
+        const inc = formattedTx.filter((t: any) => t.type === 'income');
+        const exp = formattedTx.filter((t: any) => t.type === 'expense');
+        setIncome(inc);
+        setExpense(exp);
+
+        const formattedLiab = dbLiabilities.map((l: any) => ({ ...l, date: formatIfISO(l.date) }));
+        const cr = formattedLiab.filter((l: any) => l.type === 'credit');
+        const db = formattedLiab.filter((l: any) => l.type === 'debit');
+        setLiabilityCredit(cr);
+        setLiabilityDebit(db);
+
+        setAccounts(dbAccounts);
+        setHistory([{ income: inc, expense: exp, liabilityCredit: cr, liabilityDebit: db }]);
+        setHistoryIndex(0);
+      } catch (err: any) {
+        console.error("Failed to load data from database:", err);
+      }
+    };
+
+    loadData();
   }, [user]);
 
   // --- Keyboard Shortcuts ---
@@ -368,21 +463,8 @@ function Dashboard() {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [undo, redo]);
 
-  // Helper to save data
-  const saveTransactions = (newTransactions: any[]) => {
-    if (!user) return;
-    localStorage.setItem(`transactions_${user.uid}`, JSON.stringify(newTransactions));
-  };
-
-  const saveLiabilities = (newLiabilities: any[]) => {
-    if (!user) return;
-    localStorage.setItem(`liabilities_${user.uid}`, JSON.stringify(newLiabilities));
-  };
-
-  const saveAccounts = (newAccounts: any[]) => {
-    if (!user) return;
-    localStorage.setItem(`accounts_${user.uid}`, JSON.stringify(newAccounts));
-  };
+  // Ref to hold update timeouts for debouncing database writes
+  const updateTimeouts = useRef<Record<string, NodeJS.Timeout>>({});
 
   // --- Date Helpers ---
   const getPeriodRange = useMemo(() => {
@@ -509,105 +591,151 @@ function Dashboard() {
   const addIncome = async (data?: Partial<Transaction>) => {
     if (!user) return;
     const day = new Date().getDate();
-    const newT: Transaction = {
-      id: Math.random().toString(36).substr(2, 9),
-      date: formatReadableDate(day, currentMonth),
-      description: data?.description || "",
-      amount: Number(data?.amount) || 0,
-      gst: Number(data?.gst) || 0,
-      total: preciseAdd(Number(data?.amount || 0), Number(data?.gst || 0)),
-      type: 'income',
-      userId: user.uid,
-      createdAt: new Date().toISOString()
-    };
-    const updated = [...income, newT];
-    setIncome(updated);
-    saveTransactions([...updated, ...expense.map(e => ({ ...e, type: 'expense' }))]);
-    pushToHistory({ income: updated, expense, liabilityCredit, liabilityDebit });
+    try {
+      const created = await apiFetch('/api/transactions', {
+        method: 'POST',
+        body: JSON.stringify({
+          date: formatReadableDate(day, currentMonth),
+          description: data?.description || "",
+          amount: Number(data?.amount) || 0,
+          gst: Number(data?.gst) || 0,
+          total: preciseAdd(Number(data?.amount || 0), Number(data?.gst || 0)),
+          type: 'income',
+        })
+      });
+      const updated = [...income, created];
+      setIncome(updated);
+      pushToHistory({ income: updated, expense, liabilityCredit, liabilityDebit });
+    } catch (err: any) {
+      alert("Failed to add transaction: " + err.message);
+    }
   };
 
   const addExpense = async (data?: Partial<Transaction>) => {
     if (!user) return;
     const day = new Date().getDate();
-    const newT: Transaction = {
-      id: Math.random().toString(36).substr(2, 9),
-      date: formatReadableDate(day, currentMonth),
-      description: data?.description || "",
-      amount: Number(data?.amount) || 0,
-      gst: Number(data?.gst) || 0,
-      total: preciseAdd(Number(data?.amount || 0), Number(data?.gst || 0)),
-      type: 'expense',
-      userId: user.uid,
-      createdAt: new Date().toISOString()
-    };
-    const updated = [...expense, newT];
-    setExpense(updated);
-    saveTransactions([...income.map(i => ({ ...i, type: 'income' })), ...updated]);
-    pushToHistory({ income, expense: updated, liabilityCredit, liabilityDebit });
+    try {
+      const created = await apiFetch('/api/transactions', {
+        method: 'POST',
+        body: JSON.stringify({
+          date: formatReadableDate(day, currentMonth),
+          description: data?.description || "",
+          amount: Number(data?.amount) || 0,
+          gst: Number(data?.gst) || 0,
+          total: preciseAdd(Number(data?.amount || 0), Number(data?.gst || 0)),
+          type: 'expense',
+        })
+      });
+      const updated = [...expense, created];
+      setExpense(updated);
+      pushToHistory({ income, expense: updated, liabilityCredit, liabilityDebit });
+    } catch (err: any) {
+      alert("Failed to add transaction: " + err.message);
+    }
   };
 
   const addLiabilityCredit = async (data?: Partial<Liability>) => {
     if (!user) return;
     const day = new Date().getDate();
-    const newL: Liability = {
-      id: Math.random().toString(36).substr(2, 9),
-      date: formatReadableDate(day, currentMonth),
-      account: data?.account || "",
-      description: data?.description || "",
-      amount: Number(data?.amount) || 0,
-      type: 'credit',
-      userId: user.uid,
-      createdAt: new Date().toISOString()
-    };
-    const updated = [...liabilityCredit, newL];
-    setLiabilityCredit(updated);
-    saveLiabilities([...updated, ...liabilityDebit.map(d => ({ ...d, type: 'debit' }))]);
-    pushToHistory({ income, expense, liabilityCredit: updated, liabilityDebit });
+    try {
+      const created = await apiFetch('/api/liabilities', {
+        method: 'POST',
+        body: JSON.stringify({
+          date: formatReadableDate(day, currentMonth),
+          account: data?.account || "",
+          description: data?.description || "",
+          amount: Number(data?.amount) || 0,
+          type: 'credit',
+        })
+      });
+      const updated = [...liabilityCredit, created];
+      setLiabilityCredit(updated);
+      pushToHistory({ income, expense, liabilityCredit: updated, liabilityDebit });
+    } catch (err: any) {
+      alert("Failed to add liability: " + err.message);
+    }
   };
 
   const addLiabilityDebit = async (data?: Partial<Liability>) => {
     if (!user) return;
     const day = new Date().getDate();
-    const newL: Liability = {
-      id: Math.random().toString(36).substr(2, 9),
-      date: formatReadableDate(day, currentMonth),
-      account: data?.account || "",
-      description: data?.description || "",
-      amount: Number(data?.amount) || 0,
-      type: 'debit',
-      userId: user.uid,
-      createdAt: new Date().toISOString()
-    };
-    const updated = [...liabilityDebit, newL];
-    setLiabilityDebit(updated);
-    saveLiabilities([...liabilityCredit.map(c => ({ ...c, type: 'credit' })), ...updated]);
-    pushToHistory({ income, expense, liabilityCredit, liabilityDebit: updated });
+    try {
+      const created = await apiFetch('/api/liabilities', {
+        method: 'POST',
+        body: JSON.stringify({
+          date: formatReadableDate(day, currentMonth),
+          account: data?.account || "",
+          description: data?.description || "",
+          amount: Number(data?.amount) || 0,
+          type: 'debit',
+        })
+      });
+      const updated = [...liabilityDebit, created];
+      setLiabilityDebit(updated);
+      pushToHistory({ income, expense, liabilityCredit, liabilityDebit: updated });
+    } catch (err: any) {
+      alert("Failed to add liability: " + err.message);
+    }
   };
 
   const addAccount = async () => {
     if (!user) return;
     const name = prompt("Enter account name:");
     if (name) {
-      const newAcc: Account = {
-        id: Math.random().toString(36).substr(2, 9),
-        name,
-        userId: user.uid,
-        createdAt: new Date().toISOString()
-      };
-      const updated = [...accounts, newAcc];
-      setAccounts(updated);
-      saveAccounts(updated);
+      try {
+        const created = await apiFetch('/api/accounts', {
+          method: 'POST',
+          body: JSON.stringify({ name })
+        });
+        setAccounts(prev => [...prev, created]);
+      } catch (err: any) {
+        alert("Failed to add account: " + err.message);
+      }
     }
+  };
+
+  const debounceUpdateTransaction = (tx: Transaction) => {
+    if (updateTimeouts.current[tx.id]) {
+      clearTimeout(updateTimeouts.current[tx.id]);
+    }
+    updateTimeouts.current[tx.id] = setTimeout(async () => {
+      try {
+        await apiFetch(`/api/transactions/${tx.id}`, {
+          method: 'PUT',
+          body: JSON.stringify(tx)
+        });
+      } catch (err) {
+        console.error("Failed to update transaction in database:", err);
+      }
+    }, 500);
+  };
+
+  const debounceUpdateLiability = (liab: Liability) => {
+    if (updateTimeouts.current[liab.id]) {
+      clearTimeout(updateTimeouts.current[liab.id]);
+    }
+    updateTimeouts.current[liab.id] = setTimeout(async () => {
+      try {
+        await apiFetch(`/api/liabilities/${liab.id}`, {
+          method: 'PUT',
+          body: JSON.stringify(liab)
+        });
+      } catch (err) {
+        console.error("Failed to update liability in database:", err);
+      }
+    }, 500);
   };
 
   const updateTransaction = async (type: 'income' | 'expense', id: string, field: keyof Transaction, value: any) => {
     const list = type === 'income' ? income : expense;
+    let updatedTx: Transaction | null = null;
     const updatedList = list.map(t => {
       if (t.id === id) {
         const newT = { ...t, [field]: value };
         if (field === 'amount' || field === 'gst') {
           newT.total = preciseAdd(newT.amount, newT.gst);
         }
+        updatedTx = newT;
         return newT;
       }
       return t;
@@ -615,63 +743,77 @@ function Dashboard() {
 
     if (type === 'income') {
       setIncome(updatedList);
-      saveTransactions([...updatedList, ...expense.map(e => ({ ...e, type: 'expense' }))]);
-      pushToHistory({ income: updatedList, expense, liabilityCredit, liabilityDebit });
     } else {
       setExpense(updatedList);
-      saveTransactions([...income.map(i => ({ ...i, type: 'income' })), ...updatedList]);
-      pushToHistory({ income, expense: updatedList, liabilityCredit, liabilityDebit });
+    }
+
+    if (updatedTx) {
+      debounceUpdateTransaction(updatedTx);
     }
   };
 
   const updateLiability = async (type: 'credit' | 'debit', id: string, field: keyof Liability, value: any) => {
     const list = type === 'credit' ? liabilityCredit : liabilityDebit;
+    let updatedLiab: Liability | null = null;
     const updatedList = list.map(l => {
       if (l.id === id) {
-        return { ...l, [field]: value };
+        const newL = { ...l, [field]: value };
+        updatedLiab = newL;
+        return newL;
       }
       return l;
     });
 
     if (type === 'credit') {
       setLiabilityCredit(updatedList);
-      saveLiabilities([...updatedList, ...liabilityDebit.map(d => ({ ...d, type: 'debit' }))]);
-      pushToHistory({ income, expense, liabilityCredit: updatedList, liabilityDebit });
     } else {
       setLiabilityDebit(updatedList);
-      saveLiabilities([...liabilityCredit.map(c => ({ ...c, type: 'credit' })), ...updatedList]);
-      pushToHistory({ income, expense, liabilityCredit, liabilityDebit: updatedList });
+    }
+
+    if (updatedLiab) {
+      debounceUpdateLiability(updatedLiab);
     }
   };
 
   const deleteTransaction = async (id: string) => {
-    const newIncome = income.filter(t => t.id !== id);
-    const newExpense = expense.filter(t => t.id !== id);
-    setIncome(newIncome);
-    setExpense(newExpense);
-    saveTransactions([
-      ...newIncome.map(i => ({ ...i, type: 'income' })),
-      ...newExpense.map(e => ({ ...e, type: 'expense' }))
-    ]);
-    pushToHistory({ income: newIncome, expense: newExpense, liabilityCredit, liabilityDebit });
+    try {
+      await apiFetch(`/api/transactions/${id}`, {
+        method: 'DELETE'
+      });
+      const newIncome = income.filter(t => t.id !== id);
+      const newExpense = expense.filter(t => t.id !== id);
+      setIncome(newIncome);
+      setExpense(newExpense);
+      pushToHistory({ income: newIncome, expense: newExpense, liabilityCredit, liabilityDebit });
+    } catch (err: any) {
+      alert("Failed to delete transaction: " + err.message);
+    }
   };
 
   const deleteLiability = async (id: string) => {
-    const newCredit = liabilityCredit.filter(l => l.id !== id);
-    const newDebit = liabilityDebit.filter(l => l.id !== id);
-    setLiabilityCredit(newCredit);
-    setLiabilityDebit(newDebit);
-    saveLiabilities([
-      ...newCredit.map(c => ({ ...c, type: 'credit' })),
-      ...newDebit.map(d => ({ ...d, type: 'debit' }))
-    ]);
-    pushToHistory({ income, expense, liabilityCredit: newCredit, liabilityDebit: newDebit });
+    try {
+      await apiFetch(`/api/liabilities/${id}`, {
+        method: 'DELETE'
+      });
+      const newCredit = liabilityCredit.filter(l => l.id !== id);
+      const newDebit = liabilityDebit.filter(l => l.id !== id);
+      setLiabilityCredit(newCredit);
+      setLiabilityDebit(newDebit);
+      pushToHistory({ income, expense, liabilityCredit: newCredit, liabilityDebit: newDebit });
+    } catch (err: any) {
+      alert("Failed to delete liability: " + err.message);
+    }
   };
 
   const deleteAccount = async (id: string) => {
-    const updated = accounts.filter(a => a.id !== id);
-    setAccounts(updated);
-    saveAccounts(updated);
+    try {
+      await apiFetch(`/api/accounts/${id}`, {
+        method: 'DELETE'
+      });
+      setAccounts(prev => prev.filter(a => a.id !== id));
+    } catch (err: any) {
+      alert("Failed to delete account: " + err.message);
+    }
   };
 
   return (
@@ -957,6 +1099,13 @@ function Dashboard() {
 
 function Login() {
   const { login, authError, setAuthError } = useAuth();
+  const [email, setEmail] = useState('demo@example.com');
+  const [password, setPassword] = useState('Numasoft@#2!');
+
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    login(email, password);
+  };
 
   return (
     <div className="min-h-screen bg-[#f0f2f5] flex items-center justify-center p-4">
@@ -970,10 +1119,10 @@ function Login() {
             <Lock className="text-white" size={32} />
           </div>
           <h1 className="text-2xl font-bold text-white mb-2">Secure Dashboard</h1>
-          <p className="text-blue-200 text-sm">Access your financial records safely</p>
+          <p className="text-blue-200 text-sm">Access your financial database</p>
         </div>
         
-        <div className="p-8 space-y-6">
+        <form onSubmit={handleSubmit} className="p-8 space-y-4">
           {authError && (
             <motion.div 
               initial={{ opacity: 0, height: 0 }}
@@ -987,6 +1136,7 @@ function Login() {
                 </p>
               </div>
               <button 
+                type="button"
                 onClick={() => setAuthError(null)}
                 className="text-red-400 hover:text-red-600 transition-colors"
               >
@@ -995,27 +1145,50 @@ function Login() {
             </motion.div>
           )}
 
-          <div className="space-y-4">
-            <div className="p-4 bg-blue-50 rounded-2xl border border-blue-100 flex items-start gap-3">
-              <AlertCircle className="text-blue-600 shrink-0" size={20} />
-              <p className="text-xs text-blue-800 leading-relaxed">
-                This dashboard uses local storage to keep your data private on this device.
-              </p>
+          <div className="space-y-3">
+            <div>
+              <label className="text-[10px] font-bold text-gray-500 uppercase tracking-wider block mb-1">Email Address</label>
+              <div className="relative">
+                <Mail className="absolute left-4 top-3 text-gray-400" size={16} />
+                <input 
+                  type="email" 
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  className="w-full bg-gray-50 border border-gray-200 focus:border-blue-500 focus:ring-1 focus:ring-blue-100 rounded-xl pl-12 pr-4 py-3 text-xs outline-none transition-all"
+                  placeholder="Enter email"
+                  required
+                />
+              </div>
+            </div>
+
+            <div>
+              <label className="text-[10px] font-bold text-gray-500 uppercase tracking-wider block mb-1">Password</label>
+              <div className="relative">
+                <Lock className="absolute left-4 top-3 text-gray-400" size={16} />
+                <input 
+                  type="password" 
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  className="w-full bg-gray-50 border border-gray-200 focus:border-blue-500 focus:ring-1 focus:ring-blue-100 rounded-xl pl-12 pr-4 py-3 text-xs outline-none transition-all"
+                  placeholder="Enter password"
+                  required
+                />
+              </div>
             </div>
           </div>
 
           <button 
-            onClick={login}
-            className="w-full bg-[#1a365d] text-white py-4 rounded-2xl font-bold hover:bg-[#2a4a7d] transition-all flex items-center justify-center gap-3 shadow-lg group"
+            type="submit"
+            className="w-full bg-[#1a365d] text-white py-4 rounded-2xl font-bold hover:bg-[#2a4a7d] transition-all flex items-center justify-center gap-3 shadow-lg group mt-2"
           >
             <Lock size={20} className="group-hover:scale-110 transition-transform" />
-            Continue with Local Session
+            Sign In to Database
           </button>
 
           <p className="text-center text-[10px] text-gray-400">
-            By continuing, you agree to the secure data handling policies.
+            Pre-populated with default database test credentials.
           </p>
-        </div>
+        </form>
       </motion.div>
     </div>
   );
