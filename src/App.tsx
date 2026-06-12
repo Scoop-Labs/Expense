@@ -821,7 +821,7 @@ function Dashboard() {
       {/* Header */}
       <header className="flex flex-col md:flex-row justify-between items-start md:items-center mb-4 bg-white p-2 rounded-lg shadow-sm border border-gray-100 gap-2">
         <div className="flex items-center gap-2">
-          <h1 className="text-lg font-bold text-[#1a365d]">Dashboard</h1>
+          <h1 className="text-lg font-bold text-[#0E7A7A]">Dashboard</h1>
           <div className="h-4 w-[1px] bg-gray-300 mx-1 hidden md:block"></div>
           <div className="flex items-center gap-1">
             <span className="text-gray-500 font-medium text-xs">Entity ABC</span>
@@ -850,12 +850,12 @@ function Dashboard() {
           </div>
 
           {/* Duration Selector */}
-          <div className="flex items-center gap-1.5 bg-blue-50 px-2 py-1 rounded-md border border-blue-100">
-            <span className="text-[9px] font-bold text-blue-600 uppercase">View Period:</span>
+          <div className="flex items-center gap-1.5 bg-teal-50 px-2 py-1 rounded-md border border-teal-100">
+            <span className="text-[9px] font-bold text-[#0E7A7A] uppercase">View Period:</span>
             <select 
               value={viewDuration} 
               onChange={(e) => setViewDuration(Number(e.target.value))}
-              className="bg-transparent font-bold text-[0.8em] text-blue-800 outline-none cursor-pointer"
+              className="bg-transparent font-bold text-[0.8em] text-[#0A6363] outline-none cursor-pointer"
             >
               <option value={1}>1 Month</option>
               <option value={3}>3 Months</option>
@@ -903,8 +903,8 @@ function Dashboard() {
             <SummaryCard 
               title={`Total Income (${viewDuration}m)`} 
               value={formatCurrency(calculations.totalIncome)} 
-              icon={<Wallet className="text-blue-600" size={16} />}
-              bgColor="bg-blue-50"
+              icon={<Wallet className="text-[#0E7A7A]" size={16} />}
+              bgColor="bg-teal-50"
               details={viewDuration > 1 ? `Avg: ${formatCurrency(calculations.monthlyAverage)} / mo` : ""}
             />
             <SummaryCard 
@@ -990,7 +990,7 @@ function Dashboard() {
         <div className="lg:col-span-3 space-y-3">
           {/* Accounts Panel */}
           <div className="bg-white rounded-lg shadow-sm border border-gray-100 overflow-hidden">
-            <div className="bg-[#1a365d] text-white p-2 flex justify-between items-center">
+            <div className="bg-[#0E7A7A] text-white p-2 flex justify-between items-center">
               <h3 className="font-semibold text-[9px]">Accounts</h3>
               <button onClick={addAccount} className="p-1 hover:bg-white/20 rounded transition-colors">
                 <Plus size={10} />
@@ -1013,7 +1013,7 @@ function Dashboard() {
 
           {/* Due Summary Panel */}
           <div className="bg-white rounded-lg shadow-sm border border-gray-100 overflow-hidden">
-            <div className="bg-[#1a365d] text-white p-2">
+            <div className="bg-[#0E7A7A] text-white p-2">
               <h3 className="font-semibold text-[9px]">Due to Summary (Cumulative)</h3>
             </div>
             <div className="p-2 space-y-1.5">
@@ -1024,12 +1024,12 @@ function Dashboard() {
                   {aggregatedDueSummary.map((due, idx) => (
                     <div key={idx} className="bg-gray-50 p-1 rounded border border-gray-100 text-[9px] font-medium text-gray-600 flex justify-between items-center">
                       <span className="truncate mr-1">{due.account}:</span>
-                      <span className={`font-bold ${due.amount > 0 ? 'text-[#1a365d]' : 'text-green-600'}`}>
+                      <span className={`font-bold ${due.amount > 0 ? 'text-[#0E7A7A]' : 'text-green-600'}`}>
                         {formatCurrency(due.amount)}
                       </span>
                     </div>
                   ))}
-                  <div className="pt-1.5 mt-1.5 border-t border-gray-200 flex justify-between text-[9px] font-bold text-[#1a365d]">
+                  <div className="pt-1.5 mt-1.5 border-t border-gray-200 flex justify-between text-[9px] font-bold text-[#0E7A7A]">
                     <span>TOTAL BALANCE:</span>
                     <span>{formatCurrency(aggregatedDueSummary.reduce((acc, curr) => acc + curr.amount, 0))}</span>
                   </div>
@@ -1066,7 +1066,7 @@ function Dashboard() {
               <div className="p-6 space-y-4">
                 <div className="flex items-center justify-between p-3 bg-gray-50 rounded-xl border border-gray-100">
                   <div className="flex items-center gap-3">
-                    <div className="w-10 h-10 rounded-full bg-blue-100 flex items-center justify-center text-blue-600 font-bold">
+                    <div className="w-10 h-10 rounded-full bg-teal-100 flex items-center justify-center text-[#0E7A7A] font-bold">
                       {user?.email?.[0].toUpperCase()}
                     </div>
                     <div>
@@ -1108,18 +1108,18 @@ function Login() {
   };
 
   return (
-    <div className="min-h-screen bg-[#f0f2f5] flex items-center justify-center p-4">
+    <div className="min-h-screen bg-[#f0f4f4] flex items-center justify-center p-4">
       <motion.div 
         initial={{ opacity: 0, y: 20 }}
         animate={{ opacity: 1, y: 0 }}
         className="bg-white w-full max-w-md rounded-3xl shadow-2xl overflow-hidden border border-gray-100"
       >
-        <div className="bg-[#1a365d] p-8 text-center">
+        <div className="bg-[#0E7A7A] p-8 text-center">
           <div className="w-16 h-16 bg-white/10 rounded-2xl flex items-center justify-center mx-auto mb-4 backdrop-blur-md border border-white/20">
             <Lock className="text-white" size={32} />
           </div>
           <h1 className="text-2xl font-bold text-white mb-2">Secure Dashboard</h1>
-          <p className="text-blue-200 text-sm">Access your financial database</p>
+          <p className="text-teal-200 text-sm">Access your financial database</p>
         </div>
         
         <form onSubmit={handleSubmit} className="p-8 space-y-4">
@@ -1154,7 +1154,7 @@ function Login() {
                   type="email" 
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
-                  className="w-full bg-gray-50 border border-gray-200 focus:border-blue-500 focus:ring-1 focus:ring-blue-100 rounded-xl pl-12 pr-4 py-3 text-xs outline-none transition-all"
+                  className="w-full bg-gray-50 border border-gray-200 focus:border-[#0E7A7A] focus:ring-1 focus:ring-teal-100 rounded-xl pl-12 pr-4 py-3 text-xs outline-none transition-all"
                   placeholder="Enter email"
                   required
                 />
@@ -1169,7 +1169,7 @@ function Login() {
                   type="password" 
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
-                  className="w-full bg-gray-50 border border-gray-200 focus:border-blue-500 focus:ring-1 focus:ring-blue-100 rounded-xl pl-12 pr-4 py-3 text-xs outline-none transition-all"
+                  className="w-full bg-gray-50 border border-gray-200 focus:border-[#0E7A7A] focus:ring-1 focus:ring-teal-100 rounded-xl pl-12 pr-4 py-3 text-xs outline-none transition-all"
                   placeholder="Enter password"
                   required
                 />
@@ -1179,7 +1179,7 @@ function Login() {
 
           <button 
             type="submit"
-            className="w-full bg-[#1a365d] text-white py-4 rounded-2xl font-bold hover:bg-[#2a4a7d] transition-all flex items-center justify-center gap-3 shadow-lg group mt-2"
+            className="w-full bg-[#0E7A7A] text-white py-4 rounded-2xl font-bold hover:bg-[#0A6363] transition-all flex items-center justify-center gap-3 shadow-lg group mt-2"
           >
             <Lock size={20} className="group-hover:scale-110 transition-transform" />
             Sign In to Database
@@ -1213,7 +1213,7 @@ function AppContent() {
     return (
       <div className="min-h-screen flex items-center justify-center bg-[#f0f2f5]">
         <div className="flex flex-col items-center gap-4">
-          <div className="w-12 h-12 border-4 border-blue-600 border-t-transparent rounded-full animate-spin"></div>
+          <div className="w-12 h-12 border-4 border-[#0E7A7A] border-t-transparent rounded-full animate-spin"></div>
           <p className="text-sm font-bold text-gray-500">Securing Connection...</p>
         </div>
       </div>
@@ -1273,7 +1273,7 @@ function TableSection({ title, data, onAdd, onUpdate, onDelete, totals }: any) {
 
   return (
     <div className="bg-white rounded-lg shadow-sm border border-gray-100 overflow-hidden flex flex-col">
-      <div className="bg-[#1a365d] text-white p-2 flex justify-between items-center">
+      <div className="bg-[#0E7A7A] text-white p-2 flex justify-between items-center">
         <h3 className="font-semibold text-xs">{title}</h3>
       </div>
       
@@ -1317,7 +1317,7 @@ function TableSection({ title, data, onAdd, onUpdate, onDelete, totals }: any) {
                           }
                         }}
                         id={`save-${item.id}`}
-                        className="text-blue-400 hover:text-blue-600 transition-all"
+                        className="text-[#0E7A7A] hover:text-[#0A6363] transition-all"
                         title={editingRows[item.id] ? "Save Changes" : "Edit Row"}
                       >
                         {editingRows[item.id] ? <Save size={10} /> : <Edit2 size={10} />}
@@ -1384,20 +1384,20 @@ function TableSection({ title, data, onAdd, onUpdate, onDelete, totals }: any) {
         </div>
 
         {/* 5th Row: Input Row */}
-        <table className="w-full text-left border-collapse table-fixed border-t border-gray-100 bg-blue-50/30">
+        <table className="w-full text-left border-collapse table-fixed border-t border-gray-100 bg-teal-50/30">
           <tbody>
             <tr className="h-[32px]">
               <td className="p-1.5 w-8 text-center">
-                <Plus size={10} className="text-blue-400 mx-auto" />
+                <Plus size={10} className="text-[#0E7A7A] mx-auto" />
               </td>
               <td className="p-1.5 w-[15%]">
-                <div className="w-full bg-white/50 border border-blue-100 rounded px-1.5 py-0.5 text-[9px] text-gray-400 italic">
+                <div className="w-full bg-white/50 border border-teal-100 rounded px-1.5 py-0.5 text-[9px] text-gray-400 italic">
                   Auto Date
                 </div>
               </td>
               <td className="p-1.5 w-[25%]">
                 <input 
-                  className="w-full bg-white border border-blue-200 rounded px-1.5 py-0.5 text-[10px] outline-none focus:border-blue-400 focus:ring-1 focus:ring-blue-100 transition-all placeholder:text-gray-300" 
+                  className="w-full bg-white border border-teal-200 rounded px-1.5 py-0.5 text-[10px] outline-none focus:border-[#0E7A7A] focus:ring-1 focus:ring-teal-100 transition-all placeholder:text-gray-300" 
                   placeholder="Add description..."
                   value={quickAdd.description}
                   onChange={(e) => setQuickAdd({...quickAdd, description: e.target.value})}
@@ -1407,7 +1407,7 @@ function TableSection({ title, data, onAdd, onUpdate, onDelete, totals }: any) {
               <td className="p-1.5 w-[18%]">
                 <input 
                   type="text"
-                  className={`w-full bg-white border rounded px-1.5 py-0.5 text-[10px] outline-none transition-all placeholder:text-gray-300 ${!isNumeric(quickAdd.amount) ? 'border-red-300 bg-red-50 text-red-600' : 'border-blue-200 focus:border-blue-400 focus:ring-1 focus:ring-blue-100'}`} 
+                  className={`w-full bg-white border rounded px-1.5 py-0.5 text-[10px] outline-none transition-all placeholder:text-gray-300 ${!isNumeric(quickAdd.amount) ? 'border-red-300 bg-red-50 text-red-600' : 'border-teal-200 focus:border-[#0E7A7A] focus:ring-1 focus:ring-teal-100'}`} 
                   placeholder="0"
                   value={quickAdd.amount}
                   onChange={(e) => setQuickAdd({...quickAdd, amount: e.target.value})}
@@ -1417,7 +1417,7 @@ function TableSection({ title, data, onAdd, onUpdate, onDelete, totals }: any) {
               <td className="p-1.5 w-[14%]">
                 <input 
                   type="text"
-                  className={`w-full bg-white border rounded px-1.5 py-0.5 text-[10px] outline-none transition-all placeholder:text-gray-300 ${!isNumeric(quickAdd.gst) ? 'border-red-300 bg-red-50 text-red-600' : 'border-blue-200 focus:border-blue-400 focus:ring-1 focus:ring-blue-100'}`} 
+                  className={`w-full bg-white border rounded px-1.5 py-0.5 text-[10px] outline-none transition-all placeholder:text-gray-300 ${!isNumeric(quickAdd.gst) ? 'border-red-300 bg-red-50 text-red-600' : 'border-teal-200 focus:border-[#0E7A7A] focus:ring-1 focus:ring-teal-100'}`} 
                   placeholder="0"
                   value={quickAdd.gst}
                   onChange={(e) => setQuickAdd({...quickAdd, gst: e.target.value})}
@@ -1427,7 +1427,7 @@ function TableSection({ title, data, onAdd, onUpdate, onDelete, totals }: any) {
               <td className="p-1.5 w-[18%]">
                 <button 
                   onClick={handleAdd}
-                  className="w-full text-[9px] font-bold text-blue-600 hover:text-blue-800 bg-blue-100/50 hover:bg-blue-100 border border-blue-200 rounded py-0.5 transition-colors"
+                  className="w-full text-[9px] font-bold text-[#0E7A7A] hover:text-[#0A6363] bg-teal-100/50 hover:bg-teal-100 border border-teal-200 rounded py-0.5 transition-colors"
                 >
                   ADD
                 </button>
@@ -1445,7 +1445,7 @@ function TableSection({ title, data, onAdd, onUpdate, onDelete, totals }: any) {
               <td colSpan={2} className="p-1.5 text-right text-[9px] text-gray-400">TOTAL</td>
               <td className="p-1.5 w-[18%] text-[10px]">₹{totals.amount}</td>
               <td className="p-1.5 w-[14%] text-[10px]">₹{totals.gst}</td>
-              <td className="p-1.5 w-[18%] text-[10px] text-[#1a365d]">₹{totals.total}</td>
+              <td className="p-1.5 w-[18%] text-[10px] text-[#0E7A7A]">₹{totals.total}</td>
               <td className="w-8"></td>
             </tr>
           </tfoot>
@@ -1478,7 +1478,7 @@ function LiabilityTable({ title, data, onAdd, onUpdate, onDelete }: any) {
 
   return (
     <div className="bg-white rounded-lg shadow-sm border border-gray-100 overflow-hidden flex flex-col">
-      <div className="bg-[#1a365d] text-white p-2 flex justify-between items-center">
+      <div className="bg-[#0E7A7A] text-white p-2 flex justify-between items-center">
         <h3 className="font-semibold text-xs">{title}</h3>
       </div>
 
@@ -1520,7 +1520,7 @@ function LiabilityTable({ title, data, onAdd, onUpdate, onDelete }: any) {
                           }
                         }}
                         id={`save-liab-${item.id}`}
-                        className="text-blue-400 hover:text-blue-600 transition-all"
+                        className="text-[#0E7A7A] hover:text-[#0A6363] transition-all"
                         title={editingRows[item.id] ? "Save Changes" : "Edit Row"}
                       >
                         {editingRows[item.id] ? <Save size={10} /> : <Edit2 size={10} />}
@@ -1583,20 +1583,20 @@ function LiabilityTable({ title, data, onAdd, onUpdate, onDelete }: any) {
         </div>
 
         {/* 5th Row: Input Row */}
-        <table className="w-full text-left border-collapse table-fixed border-t border-gray-100 bg-blue-50/30">
+        <table className="w-full text-left border-collapse table-fixed border-t border-gray-100 bg-teal-50/30">
           <tbody>
             <tr className="h-[32px]">
               <td className="p-1.5 w-8 text-center">
-                <Plus size={10} className="text-blue-400 mx-auto" />
+                <Plus size={10} className="text-[#0E7A7A] mx-auto" />
               </td>
               <td className="p-1.5 w-[20%]">
-                <div className="w-full bg-white/50 border border-blue-100 rounded px-1.5 py-0.5 text-[9px] text-gray-400 italic">
+                <div className="w-full bg-white/50 border border-teal-100 rounded px-1.5 py-0.5 text-[9px] text-gray-400 italic">
                   Auto Date
                 </div>
               </td>
               <td className="p-1.5 w-[22%]">
                 <input 
-                  className="w-full bg-white border border-blue-200 rounded px-1.5 py-0.5 text-[10px] outline-none focus:border-blue-400 focus:ring-1 focus:ring-blue-100 transition-all placeholder:text-gray-300" 
+                  className="w-full bg-white border border-teal-200 rounded px-1.5 py-0.5 text-[10px] outline-none focus:border-[#0E7A7A] focus:ring-1 focus:ring-teal-100 transition-all placeholder:text-gray-300" 
                   placeholder="Account..."
                   value={quickAdd.account}
                   onChange={(e) => setQuickAdd({...quickAdd, account: e.target.value})}
@@ -1605,7 +1605,7 @@ function LiabilityTable({ title, data, onAdd, onUpdate, onDelete }: any) {
               </td>
               <td className="p-1.5 w-[25%]">
                 <input 
-                  className="w-full bg-white border border-blue-200 rounded px-1.5 py-0.5 text-[10px] outline-none focus:border-blue-400 focus:ring-1 focus:ring-blue-100 transition-all placeholder:text-gray-300" 
+                  className="w-full bg-white border border-teal-200 rounded px-1.5 py-0.5 text-[10px] outline-none focus:border-[#0E7A7A] focus:ring-1 focus:ring-teal-100 transition-all placeholder:text-gray-300" 
                   placeholder="Description..."
                   value={quickAdd.description}
                   onChange={(e) => setQuickAdd({...quickAdd, description: e.target.value})}
@@ -1615,7 +1615,7 @@ function LiabilityTable({ title, data, onAdd, onUpdate, onDelete }: any) {
               <td className="p-1.5 w-[18%]">
                 <input 
                   type="text"
-                  className={`w-full bg-white border rounded px-1.5 py-0.5 text-[10px] outline-none transition-all placeholder:text-gray-300 ${!isNumeric(quickAdd.amount) ? 'border-red-300 bg-red-50 text-red-600' : 'border-blue-200 focus:border-blue-400 focus:ring-1 focus:ring-blue-100'}`} 
+                  className={`w-full bg-white border rounded px-1.5 py-0.5 text-[10px] outline-none transition-all placeholder:text-gray-300 ${!isNumeric(quickAdd.amount) ? 'border-red-300 bg-red-50 text-red-600' : 'border-teal-200 focus:border-[#0E7A7A] focus:ring-1 focus:ring-teal-100'}`} 
                   placeholder="0"
                   value={quickAdd.amount}
                   onChange={(e) => setQuickAdd({...quickAdd, amount: e.target.value})}
@@ -1625,7 +1625,7 @@ function LiabilityTable({ title, data, onAdd, onUpdate, onDelete }: any) {
               <td className="p-1.5 w-8 text-center">
                 <button 
                   onClick={handleAdd}
-                  className="w-full text-[9px] font-bold text-blue-600 hover:text-blue-800 bg-blue-100/50 hover:bg-blue-100 border border-blue-200 rounded py-0.5 transition-colors"
+                  className="w-full text-[9px] font-bold text-[#0E7A7A] hover:text-[#0A6363] bg-teal-100/50 hover:bg-teal-100 border border-teal-200 rounded py-0.5 transition-colors"
                 >
                   ADD
                 </button>
@@ -1640,7 +1640,7 @@ function LiabilityTable({ title, data, onAdd, onUpdate, onDelete }: any) {
             <tr className="h-[28px] font-bold">
               <td className="w-8"></td>
               <td colSpan={3} className="p-1.5 text-right text-[9px] text-gray-400 uppercase">Monthly Total</td>
-              <td className="p-1.5 w-[18%] text-[10px] text-[#1a365d]">
+              <td className="p-1.5 w-[18%] text-[10px] text-[#0E7A7A]">
                 ₹{data.reduce((acc: number, curr: any) => acc + (Number(curr.amount) || 0), 0)}
               </td>
               <td className="w-8"></td>
