@@ -55,7 +55,6 @@ const authenticateToken = (req: AuthenticatedRequest, res: Response, next: NextF
 // --- AUTHENTICATION ROUTES ---
 
 // POST /api/auth/login
-// We support passwordless or auto-signup on first login for demo purposes
 app.post('/api/auth/login', async (req: Request, res: Response): Promise<void> => {
   const { email, password } = req.body;
 
@@ -65,12 +64,10 @@ app.post('/api/auth/login', async (req: Request, res: Response): Promise<void> =
   }
 
   try {
-    // Check if user exists
     const [users]: any = await pool.query('SELECT * FROM users WHERE email = ?', [email]);
     let user;
 
     if (users.length === 0) {
-      // Auto-signup on first login
       const username = email.split('@')[0];
       const defaultPassword = password || 'default_password';
       const [result]: any = await pool.query(
@@ -80,7 +77,6 @@ app.post('/api/auth/login', async (req: Request, res: Response): Promise<void> =
       
       const userId = result.insertId;
       
-      // Auto-create default settings
       await pool.query(
         'INSERT IGNORE INTO settings (user_id, global_gst_rate, selected_entity) VALUES (?, ?, ?)',
         [userId, 18, 'Entity ABC']
@@ -89,17 +85,14 @@ app.post('/api/auth/login', async (req: Request, res: Response): Promise<void> =
       user = { id: userId, email, username, role: 'user' };
     } else {
       user = users[0];
-      // Note: In a production app, we would verify password hashing here (e.g. bcrypt).
-      // Since this is for demo, we match the existing mock login simplicity.
     }
 
-    // Generate JWT token
     const token = jwt.sign({ id: user.id, email: user.email }, JWT_SECRET, { expiresIn: '7d' });
 
     res.json({
       token,
       user: {
-        uid: String(user.id), // map id to uid for compatibility with frontend User interface
+        uid: String(user.id),
         email: user.email,
         username: user.username,
         role: user.role
@@ -428,17 +421,14 @@ app.delete('/api/accounts/:id', authenticateToken, async (req: AuthenticatedRequ
   }
 });
 
-// --- SYNC ROUTE ---
+// --- SYNC ROUTES ---
 
 // POST /api/sync
-// Sync offline localStorage data to database.
-// To avoid duplication, we check if the user already has data. If they don't, we insert the batch.
 app.post('/api/sync', authenticateToken, async (req: AuthenticatedRequest, res: Response): Promise<void> => {
   const userId = req.user?.id;
   const { transactions, liabilities, accounts } = req.body;
 
   try {
-    // 1. Sync accounts
     const [existingAccounts]: any = await pool.query('SELECT COUNT(*) as count FROM accounts WHERE user_id = ?', [userId]);
     if (existingAccounts[0].count === 0 && Array.isArray(accounts)) {
       for (const acc of accounts) {
@@ -448,7 +438,6 @@ app.post('/api/sync', authenticateToken, async (req: AuthenticatedRequest, res: 
       }
     }
 
-    // 2. Sync transactions
     const [existingTx]: any = await pool.query('SELECT COUNT(*) as count FROM transactions WHERE user_id = ?', [userId]);
     if (existingTx[0].count === 0 && Array.isArray(transactions)) {
       for (const tx of transactions) {
@@ -468,7 +457,6 @@ app.post('/api/sync', authenticateToken, async (req: AuthenticatedRequest, res: 
       }
     }
 
-    // 3. Sync liabilities
     const [existingLiab]: any = await pool.query('SELECT COUNT(*) as count FROM liabilities WHERE user_id = ?', [userId]);
     if (existingLiab[0].count === 0 && Array.isArray(liabilities)) {
       for (const liab of liabilities) {
@@ -495,7 +483,6 @@ app.post('/api/sync', authenticateToken, async (req: AuthenticatedRequest, res: 
 });
 
 // POST /api/sync/overwrite
-// Overwrites all user's transactions and liabilities with the provided lists (used for Undo/Redo DB sync).
 app.post('/api/sync/overwrite', authenticateToken, async (req: AuthenticatedRequest, res: Response): Promise<void> => {
   const userId = req.user?.id;
   const { transactions, liabilities } = req.body;
@@ -505,9 +492,7 @@ app.post('/api/sync/overwrite', authenticateToken, async (req: AuthenticatedRequ
     await connection.beginTransaction();
 
     if (Array.isArray(transactions)) {
-      // Delete old transactions
       await connection.query('DELETE FROM transactions WHERE user_id = ?', [userId]);
-      // Insert new transactions
       for (const tx of transactions) {
         await connection.query(
           'INSERT INTO transactions (date, description, amount, gst, total, type, user_id, entity_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
@@ -526,9 +511,7 @@ app.post('/api/sync/overwrite', authenticateToken, async (req: AuthenticatedRequ
     }
 
     if (Array.isArray(liabilities)) {
-      // Delete old liabilities
       await connection.query('DELETE FROM liabilities WHERE user_id = ?', [userId]);
-      // Insert new liabilities
       for (const liab of liabilities) {
         await connection.query(
           'INSERT INTO liabilities (date, account, description, amount, type, user_id, entity_id) VALUES (?, ?, ?, ?, ?, ?, ?)',
@@ -556,7 +539,11 @@ app.post('/api/sync/overwrite', authenticateToken, async (req: AuthenticatedRequ
   }
 });
 
-// Start Server
-app.listen(PORT, () => {
-  console.log(`Server is running on port ${PORT}`);
-});
+// Start Server locally (not on Vercel serverless)
+if (process.env.NODE_ENV !== 'production') {
+  app.listen(PORT, () => {
+    console.log(`Server is running locally on port ${PORT}`);
+  });
+}
+
+export default app;

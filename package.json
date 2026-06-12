@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite --port=3000 --host=0.0.0.0",
-    "server": "tsx server.ts",
+    "server": "tsx api/index.ts",
     "start-all": "node -e \"const { spawn } = require('child_process'); spawn('npm', ['run', 'dev'], { stdio: 'inherit', shell: true }); spawn('npm', ['run', 'server'], { stdio: 'inherit', shell: true });\"",
     "build": "vite build",
     "preview": "vite preview",
