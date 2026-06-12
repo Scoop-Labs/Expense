@@ -1,6 +1,8 @@
 Testing 
 
-1. Install dependencies:
+Install dependencies:
    `npm install`
-2. Run the app:
+
+
+Run the app:
    `npm run dev`
