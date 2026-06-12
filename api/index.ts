@@ -421,6 +421,65 @@ app.delete('/api/accounts/:id', authenticateToken, async (req: AuthenticatedRequ
   }
 });
 
+// --- SETTINGS ROUTES ---
+
+// GET /api/settings
+app.get('/api/settings', authenticateToken, async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+  const userId = req.user?.id;
+  try {
+    const [rows]: any = await pool.query('SELECT * FROM settings WHERE user_id = ?', [userId]);
+    if (rows.length === 0) {
+      // Create default settings if not exists
+      await pool.query(
+        'INSERT IGNORE INTO settings (user_id, global_gst_rate, selected_entity) VALUES (?, ?, ?)',
+        [userId, 18, 'Entity ABC']
+      );
+      res.json({ global_gst_rate: 18, selected_entity: 'Entity ABC' });
+    } else {
+      res.json({
+        global_gst_rate: Number(rows[0].global_gst_rate),
+        selected_entity: rows[0].selected_entity
+      });
+    }
+  } catch (error: any) {
+    console.error('Get settings error:', error);
+    res.status(500).json({ error: 'Failed to fetch settings' });
+  }
+});
+
+// POST /api/settings
+app.post('/api/settings', authenticateToken, async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+  const userId = req.user?.id;
+  const { global_gst_rate, selected_entity } = req.body;
+  try {
+    await pool.query(
+      'INSERT INTO settings (user_id, global_gst_rate, selected_entity) VALUES (?, ?, ?) ON DUPLICATE KEY UPDATE global_gst_rate = ?, selected_entity = ?',
+      [userId, Number(global_gst_rate) || 18, selected_entity || 'Entity ABC', Number(global_gst_rate) || 18, selected_entity || 'Entity ABC']
+    );
+    res.json({ success: true });
+  } catch (error: any) {
+    console.error('Save settings error:', error);
+    res.status(500).json({ error: 'Failed to save settings' });
+  }
+});
+
+// PUT /api/update-password
+app.put('/api/update-password', authenticateToken, async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+  const userId = req.user?.id;
+  const { newPassword } = req.body;
+  if (!newPassword) {
+    res.status(400).json({ error: 'New password is required' });
+    return;
+  }
+  try {
+    await pool.query('UPDATE users SET password = ? WHERE id = ?', [newPassword, userId]);
+    res.json({ success: true });
+  } catch (error: any) {
+    console.error('Update password error:', error);
+    res.status(500).json({ error: 'Failed to update password' });
+  }
+});
+
 // --- SYNC ROUTES ---
 
 // POST /api/sync

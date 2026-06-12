@@ -303,6 +303,9 @@ function Dashboard() {
   const [currentYear, setCurrentYear] = useState("2026");
   const [viewDuration, setViewDuration] = useState(1); // 1, 3, 4, 6 months
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  const [selectedEntity, setSelectedEntity] = useState<string>("Entity ABC");
+  const [globalGstRate, setGlobalGstRate] = useState(18);
+  const [settingsSuccess, setSettingsSuccess] = useState<string | null>(null);
 
   // --- Undo/Redo State ---
   const [history, setHistory] = useState<HistoryState[]>([]);
@@ -373,11 +376,17 @@ function Dashboard() {
 
     const loadData = async () => {
       try {
-        const [dbTransactions, dbLiabilities, dbAccounts] = await Promise.all([
+        const [dbTransactions, dbLiabilities, dbAccounts, dbSettings] = await Promise.all([
           apiFetch('/api/transactions'),
           apiFetch('/api/liabilities'),
-          apiFetch('/api/accounts')
+          apiFetch('/api/accounts'),
+          apiFetch('/api/settings').catch(() => ({ global_gst_rate: 18, selected_entity: 'Entity ABC' }))
         ]);
+
+        if (dbSettings) {
+          setGlobalGstRate(dbSettings.global_gst_rate);
+          setSelectedEntity(dbSettings.selected_entity);
+        }
 
         if (dbTransactions.length === 0 && dbLiabilities.length === 0 && dbAccounts.length === 0) {
           const initials = {
@@ -398,11 +407,17 @@ function Dashboard() {
           });
           
           // Re-load
-          const [newTx, newLiab, newAcc] = await Promise.all([
+          const [newTx, newLiab, newAcc, newSets] = await Promise.all([
             apiFetch('/api/transactions'),
             apiFetch('/api/liabilities'),
-            apiFetch('/api/accounts')
+            apiFetch('/api/accounts'),
+            apiFetch('/api/settings').catch(() => ({ global_gst_rate: 18, selected_entity: 'Entity ABC' }))
           ]);
+
+          if (newSets) {
+            setGlobalGstRate(newSets.global_gst_rate);
+            setSelectedEntity(newSets.selected_entity);
+          }
           
           const formattedTx = newTx.map((t: any) => ({ ...t, date: formatIfISO(t.date) }));
           const inc = formattedTx.filter((t: any) => t.type === 'income');
@@ -595,7 +610,7 @@ function Dashboard() {
       const created = await apiFetch('/api/transactions', {
         method: 'POST',
         body: JSON.stringify({
-          date: formatReadableDate(day, currentMonth),
+          date: data?.date || formatReadableDate(day, currentMonth),
           description: data?.description || "",
           amount: Number(data?.amount) || 0,
           gst: Number(data?.gst) || 0,
@@ -618,7 +633,7 @@ function Dashboard() {
       const created = await apiFetch('/api/transactions', {
         method: 'POST',
         body: JSON.stringify({
-          date: formatReadableDate(day, currentMonth),
+          date: data?.date || formatReadableDate(day, currentMonth),
           description: data?.description || "",
           amount: Number(data?.amount) || 0,
           gst: Number(data?.gst) || 0,
@@ -641,7 +656,7 @@ function Dashboard() {
       const created = await apiFetch('/api/liabilities', {
         method: 'POST',
         body: JSON.stringify({
-          date: formatReadableDate(day, currentMonth),
+          date: data?.date || formatReadableDate(day, currentMonth),
           account: data?.account || "",
           description: data?.description || "",
           amount: Number(data?.amount) || 0,
@@ -663,7 +678,7 @@ function Dashboard() {
       const created = await apiFetch('/api/liabilities', {
         method: 'POST',
         body: JSON.stringify({
-          date: formatReadableDate(day, currentMonth),
+          date: data?.date || formatReadableDate(day, currentMonth),
           account: data?.account || "",
           description: data?.description || "",
           amount: Number(data?.amount) || 0,
@@ -816,6 +831,32 @@ function Dashboard() {
     }
   };
 
+  const updatePassword = async (newPassword: string) => {
+    try {
+      await apiFetch('/api/update-password', {
+        method: 'PUT',
+        body: JSON.stringify({ newPassword })
+      });
+      setSettingsSuccess("Password updated successfully!");
+      setTimeout(() => setSettingsSuccess(null), 3000);
+    } catch (err: any) {
+      alert("Failed to update password: " + err.message);
+    }
+  };
+
+  const saveSettings = async (gstRate: number, entity: string) => {
+    try {
+      await apiFetch('/api/settings', {
+        method: 'POST',
+        body: JSON.stringify({ global_gst_rate: gstRate, selected_entity: entity })
+      });
+      setSettingsSuccess("Tax configuration updated successfully!");
+      setTimeout(() => setSettingsSuccess(null), 3000);
+    } catch (err: any) {
+      console.error("Failed to save settings:", err);
+    }
+  };
+
   return (
     <div className="min-h-screen bg-[#f0f2f5] text-gray-800 font-sans p-2 lg:p-3">
       {/* Header */}
@@ -935,6 +976,8 @@ function Dashboard() {
             {/* Income Table */}
             <TableSection 
               title="Income" 
+              globalGstRate={globalGstRate}
+              currentMonth={currentMonth}
               data={filteredIncome} 
               onAdd={addIncome}
               onUpdate={(id: string, f: any, v: any) => updateTransaction('income', id, f, v)}
@@ -949,6 +992,8 @@ function Dashboard() {
             {/* Expense Table */}
             <TableSection 
               title="Expense" 
+              globalGstRate={globalGstRate}
+              currentMonth={currentMonth}
               data={filteredExpense} 
               onAdd={addExpense}
               onUpdate={(id: string, f: any, v: any) => updateTransaction('expense', id, f, v)}
@@ -963,6 +1008,7 @@ function Dashboard() {
             {/* Liability Credit Table */}
             <LiabilityTable 
               title="Liability Credit" 
+              currentMonth={currentMonth}
               data={filteredLiabilityCredit.filter(l => {
                 const d = parseItemDate(l.date);
                 return d.getMonth() === MONTHS.indexOf(currentMonth) && d.getFullYear() === parseInt(currentYear);
@@ -975,6 +1021,7 @@ function Dashboard() {
             {/* Liability Debit Table */}
             <LiabilityTable 
               title="Liability Debit" 
+              currentMonth={currentMonth}
               data={filteredLiabilityDebit.filter(l => {
                 const d = parseItemDate(l.date);
                 return d.getMonth() === MONTHS.indexOf(currentMonth) && d.getFullYear() === parseInt(currentYear);
@@ -1064,6 +1111,12 @@ function Dashboard() {
                 </button>
               </div>
               <div className="p-6 space-y-4">
+                {settingsSuccess && (
+                  <div className="p-2.5 bg-green-50 border border-green-200 text-green-700 text-xs rounded-xl font-bold text-center">
+                    {settingsSuccess}
+                  </div>
+                )}
+                
                 <div className="flex items-center justify-between p-3 bg-gray-50 rounded-xl border border-gray-100">
                   <div className="flex items-center gap-3">
                     <div className="w-10 h-10 rounded-full bg-teal-100 flex items-center justify-center text-[#0E7A7A] font-bold">
@@ -1072,6 +1125,70 @@ function Dashboard() {
                     <div>
                       <p className="text-sm font-bold text-gray-800">{user?.email}</p>
                       <p className="text-[10px] text-gray-500">Local Session</p>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="bg-gray-50 p-4 rounded-xl border border-gray-100">
+                  <h3 className="text-sm font-bold text-gray-800 mb-3 flex items-center gap-2">
+                    <Receipt className="text-[#0E7A7A]" size={16} />
+                    Tax Configuration
+                  </h3>
+                  <div className="grid grid-cols-2 gap-4">
+                    <div>
+                      <label className="block text-[10px] text-gray-400 uppercase font-bold mb-1">Standard GST Rate (%)</label>
+                      <div className="relative">
+                        <input 
+                          type="number"
+                          className="w-full bg-white border border-gray-200 rounded-lg px-3 py-2 text-sm outline-none focus:border-[#0E7A7A] transition-all font-bold text-[#0E7A7A]"
+                          value={globalGstRate}
+                          onChange={(e) => {
+                            const val = Number(e.target.value);
+                            if (isNaN(val) || val < 0) {
+                              alert("GST rate must be a non-negative number.");
+                              return;
+                            }
+                            setGlobalGstRate(val);
+                            saveSettings(val, selectedEntity);
+                          }}
+                        />
+                        <span className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 text-xs font-bold font-sans">%</span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="bg-gray-50 p-4 rounded-xl border border-gray-100">
+                  <h3 className="text-sm font-bold text-gray-800 mb-3 flex items-center gap-2">
+                    <Lock className="text-[#0E7A7A]" size={16} />
+                    Security Configuration
+                  </h3>
+                  <div className="space-y-4">
+                    <div>
+                      <label className="block text-[10px] text-gray-400 uppercase font-bold mb-1">New Password</label>
+                      <div className="flex gap-2">
+                        <input 
+                          id="new-password-input"
+                          type="password"
+                          className="flex-1 h-9 bg-white border border-gray-200 rounded-lg px-3 py-1.5 text-xs outline-none focus:border-[#0E7A7A] transition-all font-bold text-[#0E7A7A]"
+                          placeholder="••••••••"
+                        />
+                        <button 
+                          onClick={() => {
+                            const input = document.getElementById('new-password-input') as HTMLInputElement;
+                            const trimmedVal = input.value.trim();
+                            if (!trimmedVal) {
+                              alert('Password cannot be empty or blank spaces.');
+                              return;
+                            }
+                            updatePassword(trimmedVal);
+                            input.value = '';
+                          }}
+                          className="h-9 px-4 bg-[#0E7A7A] text-white text-[10px] font-bold rounded-lg hover:bg-[#0A6363] transition-all uppercase flex items-center justify-center"
+                        >
+                          Update
+                        </button>
+                      </div>
                     </div>
                   </div>
                 </div>
@@ -1249,8 +1366,8 @@ function SummaryCard({ title, value, icon, bgColor, percent, isProfit, details }
   );
 }
 
-function TableSection({ title, data, onAdd, onUpdate, onDelete, totals }: any) {
-  const [quickAdd, setQuickAdd] = useState({ description: '', amount: '', gst: '' });
+function TableSection({ title, data, onAdd, onUpdate, onDelete, totals, currentMonth, globalGstRate }: any) {
+  const [quickAdd, setQuickAdd] = useState({ date: '', description: '', amount: '', gst: '' });
   const [editingRows, setEditingRows] = useState<Record<string, boolean>>({});
 
   const isNumeric = (val: any) => {
@@ -1259,10 +1376,33 @@ function TableSection({ title, data, onAdd, onUpdate, onDelete, totals }: any) {
   };
 
   const handleAdd = () => {
-    if (!quickAdd.description && !quickAdd.amount) return;
-    if (!isNumeric(quickAdd.amount) || !isNumeric(quickAdd.gst)) return;
-    onAdd(quickAdd);
-    setQuickAdd({ description: '', amount: '', gst: '' });
+    if (quickAdd.date && !/^\d{2}-\d{2}-\d{4}$/.test(quickAdd.date)) {
+      alert('follow the format DD-MM-YYYY');
+      return;
+    }
+    const desc = quickAdd.description.trim();
+    if (!desc) {
+      alert("Description is required.");
+      return;
+    }
+    const amt = Number(quickAdd.amount);
+    if (!quickAdd.amount || isNaN(amt) || amt <= 0) {
+      alert("Please enter a valid positive amount.");
+      return;
+    }
+    const gstVal = Number(quickAdd.gst || 0);
+    if (isNaN(gstVal) || gstVal < 0) {
+      alert("GST must be a non-negative number.");
+      return;
+    }
+    
+    onAdd({
+      date: quickAdd.date || formatReadableDate(new Date().getDate(), currentMonth),
+      description: desc,
+      amount: amt,
+      gst: gstVal
+    });
+    setQuickAdd({ date: '', description: '', amount: '', gst: '' });
   };
 
   // Pad data to always show at least 4 rows
@@ -1329,7 +1469,7 @@ function TableSection({ title, data, onAdd, onUpdate, onDelete, totals }: any) {
                       <input 
                         className="w-full bg-transparent outline-none text-[10px]" 
                         value={item.date} 
-                        onChange={(e) => onUpdate(item.id, 'date', e.target.value)}
+                        onChange={(e) => onUpdate(item.id, 'date', e.target.value.replace(/[^0-9\-/]/g, ''))}
                         onFocus={() => setEditingRows(prev => ({ ...prev, [item.id]: true }))}
                       />
                     )}
@@ -1351,7 +1491,7 @@ function TableSection({ title, data, onAdd, onUpdate, onDelete, totals }: any) {
                         type="text"
                         className={`w-full bg-transparent outline-none text-[10px] font-medium rounded px-0.5 ${!isNumeric(item.amount) ? 'bg-red-50 border border-red-200 text-red-600' : ''}`} 
                         value={item.amount === 0 ? "" : item.amount} 
-                        onChange={(e) => onUpdate(item.id, 'amount', e.target.value)}
+                        onChange={(e) => onUpdate(item.id, 'amount', e.target.value.replace(/[^0-9.]/g, ''))}
                         onFocus={() => setEditingRows(prev => ({ ...prev, [item.id]: true }))}
                       />
                     )}
@@ -1362,7 +1502,7 @@ function TableSection({ title, data, onAdd, onUpdate, onDelete, totals }: any) {
                         type="text"
                         className={`w-full bg-transparent outline-none text-[10px] font-medium rounded px-0.5 ${!isNumeric(item.gst) ? 'bg-red-50 border border-red-200 text-red-600' : ''}`} 
                         value={item.gst === 0 ? "" : item.gst} 
-                        onChange={(e) => onUpdate(item.id, 'gst', e.target.value)}
+                        onChange={(e) => onUpdate(item.id, 'gst', e.target.value.replace(/[^0-9.]/g, ''))}
                         onFocus={() => setEditingRows(prev => ({ ...prev, [item.id]: true }))}
                       />
                     )}
@@ -1391,9 +1531,18 @@ function TableSection({ title, data, onAdd, onUpdate, onDelete, totals }: any) {
                 <Plus size={10} className="text-[#0E7A7A] mx-auto" />
               </td>
               <td className="p-1.5 w-[15%]">
-                <div className="w-full bg-white/50 border border-teal-100 rounded px-1.5 py-0.5 text-[9px] text-gray-400 italic">
-                  Auto Date
-                </div>
+                <input 
+                  className="w-full bg-white border border-teal-200 rounded px-1.5 py-0.5 text-[9px] text-[#0E7A7A] font-bold text-center outline-none focus:border-[#0E7A7A] placeholder:text-[#0E7A7A]/50 transition-all"
+                  placeholder={formatReadableDate(new Date().getDate(), currentMonth)}
+                  value={quickAdd.date}
+                  onChange={(e) => setQuickAdd({...quickAdd, date: e.target.value.replace(/[^0-9\-/]/g, '')})}
+                  onBlur={(e) => {
+                    if (e.target.value && !/^\d{2}-\d{2}-\d{4}$/.test(e.target.value)) {
+                      alert('follow the format DD-MM-YYYY');
+                    }
+                  }}
+                  onKeyDown={(e) => e.key === 'Enter' && handleAdd()}
+                />
               </td>
               <td className="p-1.5 w-[25%]">
                 <input 
@@ -1410,7 +1559,16 @@ function TableSection({ title, data, onAdd, onUpdate, onDelete, totals }: any) {
                   className={`w-full bg-white border rounded px-1.5 py-0.5 text-[10px] outline-none transition-all placeholder:text-gray-300 ${!isNumeric(quickAdd.amount) ? 'border-red-300 bg-red-50 text-red-600' : 'border-teal-200 focus:border-[#0E7A7A] focus:ring-1 focus:ring-teal-100'}`} 
                   placeholder="0"
                   value={quickAdd.amount}
-                  onChange={(e) => setQuickAdd({...quickAdd, amount: e.target.value})}
+                  onChange={(e) => {
+                    const sanitized = e.target.value.replace(/[^0-9.]/g, '');
+                    const amountNum = Number(sanitized) || 0;
+                    const calculatedGst = Math.round((amountNum * globalGstRate / 100) * 100) / 100;
+                    setQuickAdd({
+                      ...quickAdd,
+                      amount: sanitized,
+                      gst: sanitized ? calculatedGst.toString() : ''
+                    });
+                  }}
                   onKeyDown={(e) => e.key === 'Enter' && handleAdd()}
                 />
               </td>
@@ -1420,19 +1578,23 @@ function TableSection({ title, data, onAdd, onUpdate, onDelete, totals }: any) {
                   className={`w-full bg-white border rounded px-1.5 py-0.5 text-[10px] outline-none transition-all placeholder:text-gray-300 ${!isNumeric(quickAdd.gst) ? 'border-red-300 bg-red-50 text-red-600' : 'border-teal-200 focus:border-[#0E7A7A] focus:ring-1 focus:ring-teal-100'}`} 
                   placeholder="0"
                   value={quickAdd.gst}
-                  onChange={(e) => setQuickAdd({...quickAdd, gst: e.target.value})}
+                  onChange={(e) => setQuickAdd({...quickAdd, gst: e.target.value.replace(/[^0-9.]/g, '')})}
                   onKeyDown={(e) => e.key === 'Enter' && handleAdd()}
                 />
               </td>
               <td className="p-1.5 w-[18%]">
+                <div className="w-full bg-white/50 border border-teal-100 rounded px-1.5 py-0.5 text-[10px] text-gray-500 font-bold italic text-center">
+                  ₹{preciseAdd(Number(quickAdd.amount) || 0, Number(quickAdd.gst) || 0)}
+                </div>
+              </td>
+              <td className="p-1.5 w-8 text-center">
                 <button 
                   onClick={handleAdd}
-                  className="w-full text-[9px] font-bold text-[#0E7A7A] hover:text-[#0A6363] bg-teal-100/50 hover:bg-teal-100 border border-teal-200 rounded py-0.5 transition-colors"
+                  className="w-full text-[9px] font-bold text-[#0E7A7A] hover:text-[#0A6363] bg-white border border-teal-200 rounded py-0.5 transition-colors shadow-sm"
                 >
                   ADD
                 </button>
               </td>
-              <td className="p-1.5 w-8"></td>
             </tr>
           </tbody>
         </table>
@@ -1455,8 +1617,8 @@ function TableSection({ title, data, onAdd, onUpdate, onDelete, totals }: any) {
   );
 }
 
-function LiabilityTable({ title, data, onAdd, onUpdate, onDelete }: any) {
-  const [quickAdd, setQuickAdd] = useState({ account: '', description: '', amount: '' });
+function LiabilityTable({ title, data, onAdd, onUpdate, onDelete, currentMonth }: any) {
+  const [quickAdd, setQuickAdd] = useState({ date: '', account: '', description: '', amount: '' });
   const [editingRows, setEditingRows] = useState<Record<string, boolean>>({});
 
   const isNumeric = (val: any) => {
@@ -1465,10 +1627,28 @@ function LiabilityTable({ title, data, onAdd, onUpdate, onDelete }: any) {
   };
 
   const handleAdd = () => {
-    if (!quickAdd.account && !quickAdd.amount) return;
-    if (!isNumeric(quickAdd.amount)) return;
-    onAdd(quickAdd);
-    setQuickAdd({ account: '', description: '', amount: '' });
+    if (quickAdd.date && !/^\d{2}-\d{2}-\d{4}$/.test(quickAdd.date)) {
+      alert('follow the format DD-MM-YYYY');
+      return;
+    }
+    const accName = quickAdd.account.trim();
+    if (!accName) {
+      alert("Account selection is required.");
+      return;
+    }
+    const amt = Number(quickAdd.amount);
+    if (!quickAdd.amount || isNaN(amt) || amt <= 0) {
+      alert("Please enter a valid positive amount.");
+      return;
+    }
+    
+    onAdd({
+      date: quickAdd.date || formatReadableDate(new Date().getDate(), currentMonth),
+      account: accName,
+      description: quickAdd.description,
+      amount: amt
+    });
+    setQuickAdd({ date: '', account: '', description: '', amount: '' });
   };
 
   const displayData = [...data];
@@ -1532,7 +1712,7 @@ function LiabilityTable({ title, data, onAdd, onUpdate, onDelete }: any) {
                       <input 
                         className="w-full bg-transparent outline-none text-[10px]" 
                         value={item.date} 
-                        onChange={(e) => onUpdate(item.id, 'date', e.target.value)} 
+                        onChange={(e) => onUpdate(item.id, 'date', e.target.value.replace(/[^0-9\-/]/g, ''))} 
                         onFocus={() => setEditingRows(prev => ({ ...prev, [item.id]: true }))}
                       />
                     )}
@@ -1564,7 +1744,7 @@ function LiabilityTable({ title, data, onAdd, onUpdate, onDelete }: any) {
                         type="text" 
                         className={`w-full bg-transparent outline-none text-[10px] font-medium rounded px-0.5 ${!isNumeric(item.amount) ? 'bg-red-50 border border-red-200 text-red-600' : ''}`} 
                         value={item.amount === 0 ? "" : item.amount} 
-                        onChange={(e) => onUpdate(item.id, 'amount', e.target.value)} 
+                        onChange={(e) => onUpdate(item.id, 'amount', e.target.value.replace(/[^0-9.]/g, ''))} 
                         onFocus={() => setEditingRows(prev => ({ ...prev, [item.id]: true }))}
                       />
                     )}
@@ -1590,9 +1770,18 @@ function LiabilityTable({ title, data, onAdd, onUpdate, onDelete }: any) {
                 <Plus size={10} className="text-[#0E7A7A] mx-auto" />
               </td>
               <td className="p-1.5 w-[20%]">
-                <div className="w-full bg-white/50 border border-teal-100 rounded px-1.5 py-0.5 text-[9px] text-gray-400 italic">
-                  Auto Date
-                </div>
+                <input 
+                  className="w-full bg-white border border-teal-200 rounded px-1.5 py-0.5 text-[9px] text-[#0E7A7A] font-bold text-center outline-none focus:border-[#0E7A7A] placeholder:text-[#0E7A7A]/50 transition-all"
+                  placeholder={formatReadableDate(new Date().getDate(), currentMonth)}
+                  value={quickAdd.date}
+                  onChange={(e) => setQuickAdd({...quickAdd, date: e.target.value.replace(/[^0-9\-/]/g, '')})}
+                  onBlur={(e) => {
+                    if (e.target.value && !/^\d{2}-\d{2}-\d{4}$/.test(e.target.value)) {
+                      alert('follow the format DD-MM-YYYY');
+                    }
+                  }}
+                  onKeyDown={(e) => e.key === 'Enter' && handleAdd()}
+                />
               </td>
               <td className="p-1.5 w-[22%]">
                 <input 
@@ -1618,14 +1807,14 @@ function LiabilityTable({ title, data, onAdd, onUpdate, onDelete }: any) {
                   className={`w-full bg-white border rounded px-1.5 py-0.5 text-[10px] outline-none transition-all placeholder:text-gray-300 ${!isNumeric(quickAdd.amount) ? 'border-red-300 bg-red-50 text-red-600' : 'border-teal-200 focus:border-[#0E7A7A] focus:ring-1 focus:ring-teal-100'}`} 
                   placeholder="0"
                   value={quickAdd.amount}
-                  onChange={(e) => setQuickAdd({...quickAdd, amount: e.target.value})}
+                  onChange={(e) => setQuickAdd({...quickAdd, amount: e.target.value.replace(/[^0-9.]/g, '')})}
                   onKeyDown={(e) => e.key === 'Enter' && handleAdd()}
                 />
               </td>
               <td className="p-1.5 w-8 text-center">
                 <button 
                   onClick={handleAdd}
-                  className="w-full text-[9px] font-bold text-[#0E7A7A] hover:text-[#0A6363] bg-teal-100/50 hover:bg-teal-100 border border-teal-200 rounded py-0.5 transition-colors"
+                  className="w-full text-[9px] font-bold text-[#0E7A7A] hover:text-[#0A6363] bg-white border border-teal-200 rounded py-0.5 transition-colors shadow-sm"
                 >
                   ADD
                 </button>
